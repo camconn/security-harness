@@ -15,6 +15,7 @@ class BugReport:
     primary_file: str
     description: str
     poc: str
+    raw: str
 
 class State:
     src_path: str
@@ -39,7 +40,7 @@ class State:
         cur = self._sqlite_conn.cursor()
 
         cur.execute("""
-        CREATE TABLE IF NOT EXISTS project_files (
+        CREATE TABLE IF NOT EXISTS project_file (
             path          TEXT PRIMARY KEY,
             score         DOUBLE NOT NULL,
             run_count     INTEGER NOT NULL DEFAULT 0
@@ -47,20 +48,21 @@ class State:
         """)
 
         cur.execute("""
-        CREATE TABLE IF NOT EXISTS bug_reports(
+        CREATE TABLE IF NOT EXISTS bug_report(
             id              INTEGER PRIMARY KEY,
             title           TEXT NOT NULL,
             found_at        TEXT NOT NULL,
             severity        DOUBLE NOT NULL,
-            primary_file    TEXT NOT NULL REFERENCES project_files(path),
-            description     TEXT NOT NULL
+            primary_file    TEXT NOT NULL REFERENCES project_file(path),
+            description     TEXT NOT NULL,
+            raw             TEXT NOT NULL
         )
         """)
 
         cur.execute("""
-        CREATE TABLE IF NOT EXISTS bug_repro_attempts(
+        CREATE TABLE IF NOT EXISTS bug_repro_attempt(
             id              INTEGER PRIMARY KEY,
-            bug_report_id   INTEGER NOT NULL REFERENCES bug_reports(id),
+            bug_report_id   INTEGER NOT NULL REFERENCES bug_report(id),
             status          TEXT NOT NULL, -- 'pending', 'success', 'failure'
             reproduced_on   TEXT,
             poc             TEXT
@@ -72,7 +74,7 @@ class State:
     def get_file_rankings(self) -> list[FileRanking]:
         self.setup_database()
         cur = self._sqlite_conn.cursor()
-        cur.execute("SELECT path, score, run_count FROM project_files ORDER BY score DESC")
+        cur.execute("SELECT path, score, run_count FROM project_file ORDER BY score DESC")
         return [FileRanking(path=row[0], score=row[1], run_count=row[2]) for row in cur.fetchall()]
 
     def insert_file_ranking(self, path: str, score: float) -> None:
@@ -80,11 +82,11 @@ class State:
         cur = self._sqlite_conn.cursor()
         cur.execute(
             """
-            INSERT INTO project_files (path, score, run_count)
+            INSERT INTO project_file (path, score, run_count)
             VALUES (?, ?, 0)
             ON CONFLICT(path) DO UPDATE SET
                 score = excluded.score,
-                run_count = project_files.run_count + 1
+                run_count = project_file.run_count + 1
             """,
             (path, score),
         )
@@ -95,7 +97,7 @@ class State:
         cur = self._sqlite_conn.cursor()
         cur.execute(
             """
-            UPDATE project_files
+            UPDATE project_file
             SET run_count = run_count + 1
             WHERE path = ?
             """,
@@ -108,7 +110,7 @@ class State:
         cur = self._sqlite_conn.cursor()
         cur.execute("""
             SELECT path, score, run_count
-            FROM project_files
+            FROM project_file
             WHERE score > 0
             ORDER BY score / (run_count + 1) DESC
             LIMIT 1
@@ -121,15 +123,15 @@ class State:
         cur = self._sqlite_conn.cursor()
         cur.execute(
             """
-            INSERT INTO bug_reports (title, found_at, severity, primary_file, description)
-            VALUES (?, datetime('now'), ?, ?, ?)
+            INSERT INTO bug_report (title, found_at, severity, primary_file, description, raw)
+            VALUES (?, datetime('now'), ?, ?, ?, ?)
             """,
-            (report.title, report.severity, report.primary_file, report.description),
+            (report.title, report.severity, report.primary_file, report.description, report.raw),
         )
         bug_id = cur.lastrowid
         cur.execute(
             """
-            INSERT INTO bug_repro_attempts (bug_report_id, status, poc)
+            INSERT INTO bug_repro_attempt (bug_report_id, status, poc)
             VALUES (?, 'pending', ?)
             """,
             (bug_id, report.poc),
@@ -140,5 +142,5 @@ class State:
     def delete_file_ranking(self, path: list[str]) -> None:
         self.setup_database()
         cur = self._sqlite_conn.cursor()
-        cur.executemany("DELETE FROM project_files WHERE path = ?", [(p,) for p in path])
+        cur.executemany("DELETE FROM project_file WHERE path = ?", [(p,) for p in path])
         self._sqlite_conn.commit()

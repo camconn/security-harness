@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 import uuid
 
 from security_harness.agent import make_llm, make_analysis_agent
-from security_harness.state import FileRanking, State
+from security_harness.state import BugReport, FileRanking, State
 from security_harness.tools.files import make_file_tools, BLOCKED_NAMES, BLOCKED_DIRS
 
 
@@ -172,9 +172,57 @@ You may now begin analyzing your file. You have access to the read_file and list
 Analysis File: """
 
 
-def analysis(state: State, file: FileRanking) -> None:
-    # TODO: deep vulnerability analysis of file
+def _parse_bug_reports(content: str, primary_file: str) -> list[BugReport]:
+    reports = []
+    for block in content.split("<next>"):
+        status_match = re.search(r"Status:\s*(\w+)", block)
+        if not status_match or status_match.group(1).lower() == "failed":
+            continue
+        title_match = re.search(r"Title:\s*(.+)", block)
+        if not title_match:
+            continue
+        severity_match = re.search(r"Severity:\s*\S+\s*\((\d+(?:\.\d+)?)\)", block)
+        desc_match = re.search(r"Description:\s*\n(.*?)(?:Proof of Concept:|$)", block, re.DOTALL)
+        poc_match = re.search(r"Proof of Concept:\s*\n?(.*?)$", block, re.DOTALL)
+        reports.append(BugReport(
+            title=title_match.group(1).strip(),
+            severity=float(severity_match.group(1)) if severity_match else 0.0,
+            primary_file=primary_file,
+            description=desc_match.group(1).strip() if desc_match else "",
+            poc=poc_match.group(1).strip() if poc_match else "",
+            raw=block.strip(),
+        ))
+    return reports
+
+
+def analysis(state: State, file: FileRanking, agent, src_path: Path) -> list[BugReport]:
+    system_message = SystemMessage(content=FILE_ANALYSIS_TASK)
+    tool_call_id = str(uuid.uuid4())
+
+    try:
+        file_content = (src_path / file.path).read_text()
+    except Exception as e:
+        file_content = f"Error reading file: {e}"
+
+    response = agent.invoke({"messages": [
+        system_message,
+        HumanMessage(content=FILE_ANALYSIS_PROMPT + file.path),
+        AIMessage(content="", tool_calls=[{
+            "id": tool_call_id,
+            "name": "read_file",
+            "args": {"path": file.path},
+        }]),
+        ToolMessage(content=file_content, tool_call_id=tool_call_id),
+    ]})
+
+    last_message = response["messages"][-1]
+    content = last_message.content
+    if isinstance(content, list):
+        content = " ".join(p["text"] for p in content if p.get("type") == "text")
+
+    reports = _parse_bug_reports(content, file.path)
     state.increment_run_count(file.path)
+    return reports
 
 
 def run_harness(args: Namespace) -> None:
@@ -225,11 +273,17 @@ def run_harness(args: Namespace) -> None:
     # Analysis phase: deep-analyse files by priority
     if args.analysis_count > 0:
         print(f"Running {args.analysis_count} analysis round(s)...")
+        llm = make_llm(args.provider, args.model)
+        file_tools = make_file_tools(src_path)
+        analysis_agent = make_analysis_agent(llm, file_tools)
         for _ in range(args.analysis_count):
             target = state.next_analysis_target()
             if target is None:
                 break
-            analysis(state, target)
+            reports = analysis(state, target, analysis_agent, src_path)
+            for report in reports:
+                bug_id = state.insert_bug_report(report)
+                print(f"  [{bug_id}] {report.severity:.1f}  {report.title}")
 
 
 def rank_files(agent, files: list[str], src_path: Path) -> Generator[tuple[str, float], None, None]:
