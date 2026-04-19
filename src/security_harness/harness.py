@@ -270,9 +270,10 @@ def _analysis_phase(state: State, src_path: Path, args: Namespace) -> None:
     with ThreadPoolExecutor(max_workers=_ANALYSIS_WORKERS) as executor:
         futures = {executor.submit(analysis, target, agent, src_path): target for target in targets}
         for future, target in futures.items():
-            print(f"  {target.path}...")
             reports = future.result()
             state.increment_run_count(target.path)
+            if reports:
+                print(f"  {target.path}")
             for report in reports:
                 bug_id = state.insert_bug_report(report)
                 print(f"    [{bug_id}] {report.severity:.1f}  {report.title}")
