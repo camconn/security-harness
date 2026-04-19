@@ -52,10 +52,23 @@ def run_harness(args: Namespace) -> None:
         bugs_path = str(bugs),
     )
 
-    files = list_tracked_files(src_path)
+    src_files = set(list_tracked_files(src_path))
+    db_files = {f.path: f for f in state.get_file_rankings()}
+    db_paths = set(db_files.keys())
 
-    # TODO: Do a diff between `state` and `files
-    #for file in files:
+    already_ranked = [db_files[p] for p in src_files & db_paths]
+    to_analyze = sorted(src_files - db_paths)
+    to_delete = sorted(db_paths - src_files)
+
+    if len(to_delete) > 0:
+        print(f"Deleting {len(to_delete)} file(s) from database...")
+        state.delete_file_ranking(to_delete)
+
+
+def rank_files(src_path: str) -> list[tuple[str, float]]:
+    # TODO: Go to src_path and rank files on likelihood
+
+    return []
 
 def list_tracked_files(repo_path: str | Path) -> list[str]:
     repo_path = Path(repo_path)
@@ -70,9 +83,3 @@ def list_tracked_files(repo_path: str | Path) -> list[str]:
     )
 
     return result.stdout.splitlines()
-
-
-def rank_files(src_path: str) -> list[tuple[str, float]]:
-    # TODO: Go to src_path and rank files on likelihood
-
-    return []

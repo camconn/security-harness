@@ -20,7 +20,7 @@ class State:
         self.bugs_path = bugs_path
         self._sqlite_conn = None
 
-    def _setup_database(self):
+    def setup_database(self):
         if self._sqlite_conn is None:
             sqlite_file = str(Path(self.bugs_path) / self._sqlite_name)
             self._sqlite_conn = sqlite3.connect(sqlite_file)
@@ -60,14 +60,14 @@ class State:
 
         self._sqlite_conn.commit()
 
-    def get_files(self) -> list[FileRanking]:
-        self._setup_database()
+    def get_file_rankings(self) -> list[FileRanking]:
+        self.setup_database()
         cur = self._sqlite_conn.cursor()
         cur.execute("SELECT path, score, run_count FROM project_files ORDER BY score DESC")
         return [FileRanking(path=row[0], score=row[1], run_count=row[2]) for row in cur.fetchall()]
 
     def insert_file_ranking(self, path: str, score: float) -> None:
-        self._setup_database()
+        self.setup_database()
         cur = self._sqlite_conn.cursor()
         cur.execute(
             """
@@ -82,7 +82,7 @@ class State:
         self._sqlite_conn.commit()
 
     def increment_run_count(self, path: str) -> None:
-        self._setup_database()
+        self.setup_database()
         cur = self._sqlite_conn.cursor()
         cur.execute(
             """
@@ -92,4 +92,10 @@ class State:
             """,
             (path),
         )
+        self._sqlite_conn.commit()
+
+    def delete_file_ranking(self, path: list[str]) -> None:
+        self.setup_database()
+        cur = self._sqlite_conn.cursor()
+        cur.executemany("DELETE FROM project_files WHERE path = ?", [(p,) for p in path])
         self._sqlite_conn.commit()
