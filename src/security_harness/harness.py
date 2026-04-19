@@ -1,5 +1,6 @@
 from argparse import Namespace
 from collections.abc import Generator
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import re
 import subprocess
@@ -104,7 +105,8 @@ def run_harness(args: Namespace) -> None:
 
 def rank_files(agent, files: list[str]) -> Generator[tuple[str, float], None, None]:
     system_message = SystemMessage(content=FILE_RANK_PROMPT)
-    for path in files:
+
+    def rank_one(path: str) -> tuple[str, float]:
         print(f"Ranking {path}")
         response = agent.invoke({"messages": [
             system_message,
@@ -114,13 +116,16 @@ def rank_files(agent, files: list[str]) -> Generator[tuple[str, float], None, No
         content = last_message.content
         if isinstance(content, list):
             content = " ".join(p["text"] for p in content if p.get("type") == "text")
-        match = re.search(r"Score:\s*(\d+(?:\.\d+)?)", content)
+        match = re.search(r"Score:\s*\*{0,2}(\d+(?:\.\d+)?)\*{0,2}", content)
         if match:
-            score = float(match.group(1))
-        else:
-            print(f"Invalid score for {path}: <<{content}>>")
-            score = 0.0
-        yield path, score
+            return path, float(match.group(1))
+        print(f"Invalid score for {path}: <<{content}>>")
+        return path, 0.0
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {executor.submit(rank_one, path): path for path in files}
+        for future in as_completed(futures):
+            yield future.result()
 
 def list_tracked_files(repo_path: str | Path) -> list[str]:
     repo_path = Path(repo_path)
