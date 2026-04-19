@@ -34,7 +34,7 @@ issues and vulnerabilities in a legacy codebase. You want to find issues before 
 are found and reported or exploited in the wild.
 """
 
-FILE_RANK_PROMPT = PROMPT_BASE + '\n' + """
+FILE_RANK_TASK = PROMPT_BASE + '\n' + """
 Your current task is to rank the likelihood certain files have security related
 code on a scale from 0 (not likely) to 10 (extremely likely). Look at the file
 and examine it for its security properties.
@@ -61,6 +61,115 @@ Score: 0.0
 Use the read_file tool to read the file's contents before scoring it.
 
 Rank the following file:"""
+
+FILE_ANALYSIS_TASK = PROMPT_BASE + '\n' + """
+You have been assigned a file to analyze. Your task is to deep-analyze the file
+and identify any security vulnerabilities or issues.
+
+If there are any issues found, provide a bug report with a title, explanation,
+description, and proof of concept for the code. If you fail to find an issue, simply
+fill out the same format response with the "failed" status. You may fill out multiple
+issues by placing the text `<next>` in your response.
+
+Sample format response format:
+
+Analysis File: <filename>
+
+File: <filename>
+Status: "Complete" | "Failed"
+Severity: "Low" | "Medium" | "High" | "Critical" (<CVE-Score>)
+Title: <title>
+Description:
+<description>
+Proof of Concept:
+<proof_of_concept>
+
+Examples:
+
+---
+
+Analysis File: src/kotlin/main/com/example/service/AuthenticationService.kt
+
+File: src/kotlin/main/com/example/service/AuthenticationService.kt
+Status: Complete
+Severity: High (9.0)
+Title: Authentication Service XSS
+Description:
+The authentication service is vulnerable to XSS attacks.
+Proof of Concept:
+The service is vulnerable to XSS attacks and does not checks for hostnames and performs sensitive operations
+with GET requests parameters.
+curl 'http://localhost:8080/api/v1/users/me/reset?updatePasswordTo=hunter2' -H 'Host: malicious.website'
+
+---
+
+Analysis File: src/kotlin/main/com/example/security/MockUserFilter.kt
+
+File: src/kotlin/main/com/example/security/MockUserFilter.kt
+Status: Failed
+Severity: N/A
+Title: Analysis Failed
+Description:
+N/A
+Proof of Concept:
+N/A
+
+---
+
+Analysis File: src/kotlin/main/com/example/security/JwtFilter.kt
+
+File: src/kotlin/main/com/example/service/AuthenticationService.kt
+Status: Complete
+Severity: High (8.5)
+Title: Variable-time string comparison used for JWT cache checks
+Description:
+Variable-time string comparison functions are used to check JWTs against the cache.
+This allows an attacker to discern the values of JWTs currently in the application cache.
+Proof of Concept:
+N/A
+
+<next>
+
+File: src/kotlin/main/com/example/service/AuthenticationService.kt
+Status: Complete
+Severity: Medium (5.0)
+Title: Variable-time string comparison used for password hash checks
+Description:
+Variable-time string comparison functions are used for string comparison checks.
+Proof of Concept: N/A
+
+---
+
+Analysis File: src/kotlin/main/com/example/controller/UserController.kt
+
+File: src/kotlin/main/com/example/controller/UserController.kt
+Status: Complete
+Severity: High (7.0)
+Title: Arbitrary user write without permission checks for profile updates
+Description:
+The current user's ID not is not checked or validated whenever perfro
+
+Proof of Concept:
+For a user `userId`, perform `PUT /api/v1/users/{userId}` with a payload and you may update any
+user's profile. Note that the `userId` is not checked as part of the query.
+
+```
+$ curl 'http://localhost:8080/api/v1/users/1234'
+{"id": "1234", "firstName": "Johnathan", "lastName": "Doe"}
+$ curl 'http://localhost:8080/api/v1/users/1234' -X PUT -H 'Content-Type: application/json' -d
+{"id": "1234", "firstName": "Johnathan", "lastName": "pwned"}
+$ curl 'http://localhost:8080/api/v1/users/1234'
+{"id": "1234", "firstName": "Johnathan", "lastName": "pwned"}
+```
+
+---
+
+"""
+
+FILE_ANALYSIS_PROMPT = """
+You may now begin analyzing your file. You have access to the read_file and list_directory tool calls.
+
+Analysis File: """
 
 
 def analysis(state: State, file: FileRanking) -> None:
@@ -124,7 +233,7 @@ def run_harness(args: Namespace) -> None:
 
 
 def rank_files(agent, files: list[str], src_path: Path) -> Generator[tuple[str, float], None, None]:
-    system_message = SystemMessage(content=FILE_RANK_PROMPT)
+    system_message = SystemMessage(content=FILE_RANK_TASK)
     q: Queue[tuple[str, float]] = Queue()
 
     def rank_one(path: str) -> None:
