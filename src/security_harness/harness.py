@@ -14,6 +14,20 @@ from security_harness.state import BugReport, FileRanking, State
 from security_harness.tools.files import make_file_tools, BLOCKED_NAMES, BLOCKED_DIRS
 
 
+def _load_project_notes(bugs_path: Path) -> str | None:
+    notes_file = bugs_path / "NOTES.md"
+    if notes_file.exists():
+        content = notes_file.read_text().strip()
+        return content if content else None
+    return None
+
+
+def _with_notes(base_prompt: str, notes: str | None) -> str:
+    if not notes:
+        return base_prompt
+    return base_prompt + f"\n\n## Project Context\n\nThe following notes describe how this project is deployed, its threat model, and other relevant context. Use this when making your assessments:\n\n{notes}\n"
+
+
 SKIP_EXTENSIONS = {
     # Images
     ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".ico", ".webp", ".tiff", ".tif", ".heif",
@@ -195,8 +209,8 @@ def _parse_bug_reports(content: str, primary_file: str) -> list[BugReport]:
     return reports
 
 
-def analysis(file: FileRanking, agent, src_path: Path) -> list[BugReport]:
-    system_message = SystemMessage(content=FILE_ANALYSIS_TASK)
+def analysis(file: FileRanking, agent, src_path: Path, *, notes: str | None = None) -> list[BugReport]:
+    system_message = SystemMessage(content=_with_notes(FILE_ANALYSIS_TASK, notes))
     tool_call_id = str(uuid.uuid4())
 
     try:
@@ -247,7 +261,7 @@ def _rank_phase(state: State, src_path: Path, args: Namespace, unranked: list[st
 
 _ANALYSIS_WORKERS = 6
 
-def _analysis_phase(state: State, src_path: Path, args: Namespace) -> None:
+def _analysis_phase(state: State, src_path: Path, args: Namespace, *, notes: str | None = None) -> None:
     if args.analysis_count <= 0:
         return
 
@@ -268,7 +282,7 @@ def _analysis_phase(state: State, src_path: Path, args: Namespace) -> None:
     print(f"Analyzing {len(targets)} file(s) with {_ANALYSIS_WORKERS} workers...")
 
     with ThreadPoolExecutor(max_workers=_ANALYSIS_WORKERS) as executor:
-        futures = {executor.submit(analysis, target, agent, src_path): target for target in targets}
+        futures = {executor.submit(analysis, target, agent, src_path, notes=notes): target for target in targets}
         for future, target in futures.items():
             reports = future.result()
             state.increment_run_count(target.path)
@@ -287,6 +301,10 @@ def run_harness(args: Namespace) -> None:
     bugs.mkdir(parents=True, exist_ok=True)
     print(f"Analysis storage: {bugs}")
 
+    project_notes = _load_project_notes(bugs)
+    if project_notes:
+        print(f"Project notes loaded from: {bugs / 'NOTES.md'}")
+
     state = State(src_path=str(src_path), bugs_path=str(bugs))
     excludes = [Path(e) for e in args.excludes]
 
@@ -296,7 +314,7 @@ def run_harness(args: Namespace) -> None:
         return
 
     _rank_phase(state, src_path, args, unranked)
-    _analysis_phase(state, src_path, args)
+    _analysis_phase(state, src_path, args, notes=project_notes)
 
 
 def rank_files(agent, files: list[str], src_path: Path) -> Generator[tuple[str, float], None, None]:
