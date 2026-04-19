@@ -29,7 +29,10 @@ def make_file_tools(sandbox_dir: str | Path) -> list:
             return f"Error: {path!r} is blocked"
         if not target.is_file():
             return f"Error: {path!r} is not a file"
-        return target.read_text()
+        try:
+            return target.read_text()
+        except Exception as e:
+            return f"Error reading {path!r}: {e}"
 
     @tool
     def list_directory(path: str = ".") -> str:

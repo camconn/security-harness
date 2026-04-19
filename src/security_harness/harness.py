@@ -5,13 +5,15 @@ from queue import Queue
 from pathlib import Path
 import re
 import subprocess
+import tempfile
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 import uuid
 
 from security_harness.agent import make_llm, make_analysis_agent
-from security_harness.state import BugReport, FileRanking, State
+from security_harness.state import BugReport, FileRanking, ReproAttempt, State
 from security_harness.tools.files import make_file_tools, BLOCKED_NAMES, BLOCKED_DIRS
+from security_harness.tools.local import make_sandbox_tools
 
 
 def _load_project_notes(bugs_path: Path) -> str | None:
@@ -22,10 +24,24 @@ def _load_project_notes(bugs_path: Path) -> str | None:
     return None
 
 
+def _load_verify_instructions(bugs_path: Path) -> str | None:
+    verify_file = bugs_path / "VERIFY.md"
+    if verify_file.exists():
+        content = verify_file.read_text().strip()
+        return content if content else None
+    return None
+
+
 def _with_notes(base_prompt: str, notes: str | None) -> str:
     if not notes:
         return base_prompt
     return base_prompt + f"\n\n## Project Context\n\nThe following notes describe how this project is deployed, its threat model, and other relevant context. Use this when making your assessments:\n\n{notes}\n"
+
+
+def _with_verify_instructions(base_prompt: str, instructions: str | None) -> str:
+    if not instructions:
+        return base_prompt
+    return base_prompt + f"\n\n## Verification Environment\n\nThe following instructions describe the staging environment to use when running proof-of-concept commands. Follow them exactly when crafting requests:\n\n{instructions}\n"
 
 
 SKIP_EXTENSIONS = {
@@ -161,7 +177,7 @@ Status: Complete
 Severity: High (7.0)
 Title: Arbitrary user write without permission checks for profile updates
 Description:
-The current user's ID not is not checked or validated whenever perfro
+The current user's ID not is not checked or validated whenever updating a profile.
 
 Proof of Concept:
 For a user `userId`, perform `PUT /api/v1/users/{userId}` with a payload and you may update any
@@ -185,6 +201,126 @@ You may now begin analyzing your file. You have access to the read_file and list
 
 Analysis File: """
 
+FILE_VERIFY_TASK = PROMPT_BASE + '\n' + """
+You have been assigned a bug report to verify. Your task is to confirm whether the
+described vulnerability actually exists in the codebase.
+
+Classify the verification as one of two types:
+- "audit": The vulnerability can be confirmed by reading the code alone. Use this only
+  whenever it is extremely difficult to create a proof-of-concept (i.e. cryptography flaws).
+  Since false positives are costly, only use this type for cryptographic or difficult-to-
+  confirm vulnerabilities.
+- "poc": The vulnerability requires a working proof-of-concept to confirm it is exploitable
+  (e.g., SQL injection, authentication bypass, XSS, SSRF, RCE). Use this when the bug
+  depends on runtime data-flow or requires demonstration against a running service.
+
+For "audit" findings, read the relevant source file(s) and confirm or refute the claim.
+For "poc" findings, evaluate whether the provided proof-of-concept is technically sound
+and correctly targets the described vulnerability path in the code. Write a corrected or
+improved working PoC if the original is incomplete or incorrect.
+
+You have access to the read_file and list_directory tools to read source code. You also have
+a sandbox working directory pre-populated with bug_report.md (and verify_instructions.md if
+applicable). Use write_file to create scripts or payloads in the sandbox, then run_command
+to execute them.
+
+Respond using exactly this format:
+
+Verify: <bug title>
+Type: "audit" | "poc"
+Status: "success" | "failure"
+Notes:
+<one or more paragraphs explaining your conclusion>
+WorkingPoC:
+<runnable proof-of-concept code or steps, or N/A>
+
+Examples:
+
+---
+
+Verify: IDOR on profile update endpoint allows arbitrary user modification
+Type: poc
+Status: success
+Notes:
+The UserController maps PUT /api/v1/users/{userId} directly to the service layer without checking
+that the authenticated principal matches the path parameter. Any authenticated user can overwrite
+another user's profile fields by substituting a different userId in the URL.
+
+The curl commands below were executed against the staging environment. The first request confirms
+the victim's original data, the second overwrites it as a different user, and the third confirms
+the change persisted.
+WorkingPoC:
+# Authenticate as attacker (user 5678) and modify victim (user 1234)
+TOKEN=$(curl -s -X POST https://staging.example.com/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"attacker@example.com","password":"password"}' | jq -r '.token')
+
+curl -s https://staging.example.com/api/v1/users/1234 -H "Authorization: Bearer $TOKEN"
+# {"id":"1234","firstName":"Johnathan","lastName":"Doe"}
+
+curl -s -X PUT https://staging.example.com/api/v1/users/1234 \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"firstName":"Johnathan","lastName":"pwned"}'
+
+curl -s https://staging.example.com/api/v1/users/1234 -H "Authorization: Bearer $TOKEN"
+# {"id":"1234","firstName":"Johnathan","lastName":"pwned"}
+
+---
+
+Verify: MD5 used for password hashing in UserService
+Type: audit
+Status: success
+Notes:
+Confirmed by reading UserService.kt. The hashPassword method calls
+MessageDigest.getInstance("MD5") and passes the raw password bytes directly with no salt.
+MD5 is a broken cryptographic hash — it is trivially reversible via rainbow tables and
+preimage attacks. No PoC is needed; the algorithm choice alone is the vulnerability.
+WorkingPoC:
+N/A
+
+---
+
+Verify: SQL injection in user search via lastName parameter
+Type: poc
+Status: failure
+Notes:
+The bug report claimed that the lastName query parameter is concatenated directly into a SQL
+string in UserRepository. Reading the file shows that lastName is passed through a
+JPA @Query with a named parameter binding (:lastName), which the framework treats as a
+prepared statement. The input is never interpolated as raw SQL. Manual curl tests against
+staging confirmed no anomalous behaviour — single quotes and UNION payloads were rejected
+or returned empty result sets without errors.
+WorkingPoC:
+N/A
+
+---
+
+Verify: SQL injection via User ID
+Type: poc
+Status: failure
+Notes:
+The bug report claimed that the user ID parameter is concatenated directly into an SQL string
+in UserRepository. Reading the file shows that this is correct, but the the User ID is cast to
+an integer before concatenation. Therefore, there is no logical way to exploit this issue.
+WorkingPoC:
+N/A
+
+"""
+
+FILE_VERIFY_PROMPT = """\
+Bug Title: {title}
+Severity: {severity}
+Primary File: {primary_file}
+
+Description:
+{description}
+
+Proof of Concept:
+{poc}
+
+Verify: """
+
 
 def _parse_bug_reports(content: str, primary_file: str) -> list[BugReport]:
     reports = []
@@ -207,6 +343,76 @@ def _parse_bug_reports(content: str, primary_file: str) -> list[BugReport]:
             raw=block.strip(),
         ))
     return reports
+
+
+def _parse_verify_result(content: str) -> tuple[str, str, str, str | None] | None:
+    type_match = re.search(r"Type:\s*(audit|poc)", content, re.IGNORECASE)
+    status_match = re.search(r"Status:\s*(success|failure)", content, re.IGNORECASE)
+    notes_match = re.search(r"Notes:\s*\n(.*?)(?:WorkingPoC:|$)", content, re.DOTALL)
+    poc_match = re.search(r"WorkingPoC:\s*\n?(.*?)$", content, re.DOTALL)
+    if not type_match or not status_match:
+        return None
+    raw_poc = poc_match.group(1).strip() if poc_match else None
+    working_poc = None if (not raw_poc or raw_poc.upper() == "N/A") else raw_poc
+    return (
+        type_match.group(1).lower(),
+        status_match.group(1).lower(),
+        notes_match.group(1).strip() if notes_match else "",
+        working_poc,
+    )
+
+
+def verify(attempt: ReproAttempt, llm, src_path: Path, *, notes: str | None = None, verify_instructions: str | None = None) -> tuple[str, str, str, str | None] | None:
+    system_prompt = _with_notes(FILE_VERIFY_TASK, notes)
+    system_prompt = _with_verify_instructions(system_prompt, verify_instructions)
+    system_message = SystemMessage(content=system_prompt)
+    tool_call_id = str(uuid.uuid4())
+
+    try:
+        file_content = (src_path / attempt.primary_file).read_text()
+    except Exception as e:
+        file_content = f"Error reading file: {e}"
+
+    prompt = FILE_VERIFY_PROMPT.format(
+        title=attempt.title,
+        severity=attempt.severity,
+        primary_file=attempt.primary_file,
+        description=attempt.description,
+        poc=attempt.poc or "N/A",
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmppath = Path(tmpdir)
+        (tmppath / "bug_report.md").write_text(
+            f"# Bug Report\n\n"
+            f"**Title:** {attempt.title}\n"
+            f"**Severity:** {attempt.severity}\n"
+            f"**Primary File:** {attempt.primary_file}\n\n"
+            f"## Description\n{attempt.description}\n\n"
+            f"## Proof of Concept\n{attempt.poc or 'N/A'}\n"
+        )
+        if verify_instructions:
+            (tmppath / "verify_instructions.md").write_text(verify_instructions)
+
+        agent = make_analysis_agent(llm, make_file_tools(src_path) + make_sandbox_tools(tmpdir))
+
+        response = agent.invoke({"messages": [
+            system_message,
+            HumanMessage(content=prompt),
+            AIMessage(content="", tool_calls=[{
+                "id": tool_call_id,
+                "name": "read_file",
+                "args": {"path": attempt.primary_file},
+            }]),
+            ToolMessage(content=file_content, tool_call_id=tool_call_id),
+        ]})
+
+    last_message = response["messages"][-1]
+    content = last_message.content
+    if isinstance(content, list):
+        content = " ".join(p["text"] for p in content if p.get("type") == "text")
+
+    return _parse_verify_result(content)
 
 
 def analysis(file: FileRanking, agent, src_path: Path, *, notes: str | None = None) -> list[BugReport]:
@@ -293,6 +499,57 @@ def _analysis_phase(state: State, src_path: Path, args: Namespace, *, notes: str
                 print(f"    [{bug_id}] {report.severity:.1f}  {report.title}")
 
 
+_VERIFY_WORKERS = 6
+
+def _verify_phase(state: State, src_path: Path, args: Namespace, *, notes: str | None = None, verify_instructions: str | None = None) -> None:
+    if args.verify_count <= 0:
+        return
+
+    reserved: set[int] = set()
+    targets: list[ReproAttempt] = []
+    for _ in range(args.verify_count):
+        batch = state.get_pending_repro_attempts(limit=1, exclude=reserved)
+        if not batch:
+            break
+        attempt = batch[0]
+        reserved.add(attempt.id)
+        targets.append(attempt)
+
+    if not targets:
+        return
+
+    llm = make_llm(args.provider, args.model)
+    print(f"Verifying {len(targets)} bug report(s) with {_VERIFY_WORKERS} workers...")
+
+    with ThreadPoolExecutor(max_workers=_VERIFY_WORKERS) as executor:
+        futures = {
+            executor.submit(verify, target, llm, src_path, notes=notes, verify_instructions=verify_instructions): target
+            for target in targets
+        }
+        for future, target in futures.items():
+            result = future.result()
+            if result is None:
+                print(f"  [PARSE ERROR] [{target.bug_report_id}] {target.title}")
+                state.update_repro_attempt(
+                    target.id,
+                    status="failure",
+                    verification_type="unknown",
+                    attempt_notes="Verify agent response could not be parsed.",
+                    working_poc=None,
+                )
+                continue
+            verification_type, status, attempt_notes, working_poc = result
+            icon = "+" if status == "success" else "-"
+            print(f"  [{icon}] [{target.bug_report_id}] ({verification_type}) {target.title}")
+            state.update_repro_attempt(
+                target.id,
+                status=status,
+                verification_type=verification_type,
+                attempt_notes=attempt_notes,
+                working_poc=working_poc,
+            )
+
+
 def run_harness(args: Namespace) -> None:
     src_path = Path(args.src).expanduser()
     print(f"Source to examine: {src_path}")
@@ -305,6 +562,10 @@ def run_harness(args: Namespace) -> None:
     if project_notes:
         print(f"Project notes loaded from: {bugs / 'NOTES.md'}")
 
+    verify_instructions = _load_verify_instructions(bugs)
+    if verify_instructions:
+        print(f"Verify instructions loaded from: {bugs / 'VERIFY.md'}")
+
     state = State(src_path=str(src_path), bugs_path=str(bugs))
     excludes = [Path(e) for e in args.excludes]
 
@@ -315,6 +576,7 @@ def run_harness(args: Namespace) -> None:
 
     _rank_phase(state, src_path, args, unranked)
     _analysis_phase(state, src_path, args, notes=project_notes)
+    _verify_phase(state, src_path, args, notes=project_notes, verify_instructions=verify_instructions)
 
 
 def rank_files(agent, files: list[str], src_path: Path) -> Generator[tuple[str, float], None, None]:

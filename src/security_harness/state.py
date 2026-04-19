@@ -17,6 +17,18 @@ class BugReport:
     poc: str
     raw: str
 
+@dataclass
+class ReproAttempt:
+    id: int
+    bug_report_id: int
+    status: str
+    poc: str | None
+    # Joined from bug_report
+    title: str
+    description: str
+    primary_file: str
+    severity: float
+
 class State:
     src_path: str
     bugs_path: str
@@ -68,6 +80,17 @@ class State:
             poc             TEXT
         )
         """)
+
+        for col_sql in [
+            "ALTER TABLE bug_repro_attempt ADD COLUMN attempted_at      TEXT",
+            "ALTER TABLE bug_repro_attempt ADD COLUMN attempt_notes     TEXT",
+            "ALTER TABLE bug_repro_attempt ADD COLUMN verification_type TEXT",
+            "ALTER TABLE bug_repro_attempt ADD COLUMN working_poc       TEXT",
+        ]:
+            try:
+                cur.execute(col_sql)
+            except sqlite3.OperationalError:
+                pass  # column already exists
 
         self._sqlite_conn.commit()
 
@@ -142,6 +165,62 @@ class State:
         )
         self._sqlite_conn.commit()
         return bug_id
+
+    def get_pending_repro_attempts(
+        self,
+        limit: int,
+        exclude: set[int] | None = None,
+    ) -> list[ReproAttempt]:
+        self.setup_database()
+        cur = self._sqlite_conn.cursor()
+        excluded = exclude or set()
+        exclude_clause = (
+            f"AND a.id NOT IN ({','.join('?' * len(excluded))})"
+            if excluded else ""
+        )
+        cur.execute(f"""
+            SELECT a.id, a.bug_report_id, a.status, a.poc,
+                   r.title, r.description, r.primary_file, r.severity
+            FROM bug_repro_attempt a
+            JOIN bug_report r ON r.id = a.bug_report_id
+            WHERE a.status = 'pending'
+            {exclude_clause}
+            ORDER BY r.severity DESC, a.id ASC
+            LIMIT ?
+        """, [*list(excluded), limit])
+        return [
+            ReproAttempt(
+                id=row[0], bug_report_id=row[1], status=row[2], poc=row[3],
+                title=row[4], description=row[5], primary_file=row[6], severity=row[7],
+            )
+            for row in cur.fetchall()
+        ]
+
+    def update_repro_attempt(
+        self,
+        attempt_id: int,
+        *,
+        status: str,
+        verification_type: str,
+        attempt_notes: str,
+        working_poc: str | None,
+    ) -> None:
+        self.setup_database()
+        cur = self._sqlite_conn.cursor()
+        cur.execute(
+            """
+            UPDATE bug_repro_attempt
+            SET status            = ?,
+                attempted_at      = datetime('now'),
+                reproduced_on     = CASE WHEN ? = 'success' THEN datetime('now') ELSE reproduced_on END,
+                attempt_notes     = ?,
+                verification_type = ?,
+                working_poc       = ?
+            WHERE id = ?
+            """,
+            (status, status, attempt_notes, verification_type, working_poc, attempt_id),
+        )
+        self._sqlite_conn.commit()
 
     def delete_file_ranking(self, path: list[str]) -> None:
         self.setup_database()
