@@ -72,7 +72,7 @@ class State:
         cur.execute(
             """
             INSERT INTO project_files (path, score, run_count)
-            VALUES (?, ?, 1)
+            VALUES (?, ?, 0)
             ON CONFLICT(path) DO UPDATE SET
                 score = excluded.score,
                 run_count = project_files.run_count + 1

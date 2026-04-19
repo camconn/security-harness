@@ -1,6 +1,7 @@
 from argparse import Namespace
 from collections.abc import Generator
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
 from pathlib import Path
 import re
 import subprocess
@@ -23,7 +24,7 @@ SKIP_EXTENSIONS = {
     ".pdf", ".docx", ".doc"
     # Other
     ".ttf", ".otf", ".woff", ".woff2", ".eot",
-    ".zip", ".tar", ".gz", ".bz2", ".7z",
+    ".zip", ".tar", ".jar", ".exe", ".gz", ".bz2", ".7z",
 }
 
 PROMPT_BASE = """
@@ -82,7 +83,11 @@ def run_harness(args: Namespace) -> None:
     db_paths = set(db_files.keys())
 
     already_ranked = [db_files[p] for p in src_files & db_paths]
-    to_analyze = sorted(src_files - db_paths)
+    excludes = [Path(e) for e in args.excludes]
+    to_analyze = sorted(
+        p for p in src_files - db_paths
+        if not any(Path(p).is_relative_to(e) for e in excludes)
+    )
     to_delete = sorted(db_paths - src_files)
 
     if to_delete:
@@ -105,8 +110,9 @@ def run_harness(args: Namespace) -> None:
 
 def rank_files(agent, files: list[str]) -> Generator[tuple[str, float], None, None]:
     system_message = SystemMessage(content=FILE_RANK_PROMPT)
+    q: Queue[tuple[str, float]] = Queue()
 
-    def rank_one(path: str) -> tuple[str, float]:
+    def rank_one(path: str) -> None:
         print(f"Ranking {path}")
         response = agent.invoke({"messages": [
             system_message,
@@ -118,14 +124,16 @@ def rank_files(agent, files: list[str]) -> Generator[tuple[str, float], None, No
             content = " ".join(p["text"] for p in content if p.get("type") == "text")
         match = re.search(r"Score:\s*\*{0,2}(\d+(?:\.\d+)?)\*{0,2}", content)
         if match:
-            return path, float(match.group(1))
-        print(f"Invalid score for {path}: <<{content}>>")
-        return path, 0.0
+            q.put((path, float(match.group(1))))
+        else:
+            print(f"Invalid score for {path}: <<{content}>>")
+            q.put((path, 0.0))
 
     with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = {executor.submit(rank_one, path): path for path in files}
-        for future in as_completed(futures):
-            yield future.result()
+        for path in files:
+            executor.submit(rank_one, path)
+        for _ in files:
+            yield q.get()
 
 def list_tracked_files(repo_path: str | Path) -> list[str]:
     repo_path = Path(repo_path)

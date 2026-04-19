@@ -13,6 +13,7 @@ def main():
     parser.add_argument("bugs", type=str, help="Path for bug reports")
     parser.add_argument("--dry_run", type=bool, help="Dry run flag")
     parser.add_argument("--config", type=str, default="~/.config/security_harness/config.toml", help="Path to config file")
+    parser.add_argument("--excludes", type=str, action="append", default=[], metavar="DIR", help="Directory to exclude from ranking (relative to source root, repeatable)")
     parser.add_argument("--provider", type=str, default="openai", choices=["openai", "anthropic"], help="LLM provider")
     parser.add_argument("--model", type=str, default="gpt-5.4", help="Model name for the chosen provider")
 
