@@ -241,15 +241,12 @@ def run_harness(args: Namespace) -> None:
         bugs_path = str(bugs),
     )
 
-    src_files = set(list_tracked_files(src_path))
+    excludes = [Path(e) for e in args.excludes]
+    src_files = set(list_tracked_files(src_path, excludes))
     db_files = {f.path: f for f in state.get_file_rankings()}
     db_paths = set(db_files.keys())
 
-    excludes = [Path(e) for e in args.excludes]
-    to_analyze = sorted(
-        p for p in src_files - db_paths
-        if not any(Path(p).is_relative_to(e) for e in excludes)
-    )
+    to_analyze = sorted(src_files - db_paths)
     to_delete = sorted(db_paths - src_files)
 
     if to_delete:
@@ -280,10 +277,13 @@ def run_harness(args: Namespace) -> None:
             target = state.next_analysis_target()
             if target is None:
                 break
+
+            short_name = Path(target.path).name
+            print(f"Analyzing {target.path} ({short_name})...")
             reports = analysis(state, target, analysis_agent, src_path)
             for report in reports:
                 bug_id = state.insert_bug_report(report)
-                print(f"  [{bug_id}] {report.severity:.1f}  {report.title}")
+                print(f"  [{bug_id}] {report.severity:.1f} {short_name} {report.title}")
 
 
 def rank_files(agent, files: list[str], src_path: Path) -> Generator[tuple[str, float], None, None]:
@@ -323,8 +323,10 @@ def rank_files(agent, files: list[str], src_path: Path) -> Generator[tuple[str, 
         for _ in files:
             yield q.get()
 
-def list_tracked_files(repo_path: str | Path) -> list[str]:
+def list_tracked_files(repo_path: str | Path, excludes: list[Path] | None = None) -> list[str]:
     repo_path = Path(repo_path)
+    excludes = excludes or []
+    exclude_names = {e.name for e in excludes if not e.parts[1:]}
 
     result = subprocess.run(
         ["git", "ls-files"],
@@ -340,4 +342,6 @@ def list_tracked_files(repo_path: str | Path) -> list[str]:
         if Path(p).suffix.lower() not in SKIP_EXTENSIONS
         and Path(p).name not in BLOCKED_NAMES
         and not any(part in BLOCKED_DIRS for part in Path(p).parts)
+        and not any(Path(p).is_relative_to(e) for e in excludes)
+        and Path(p).name not in exclude_names
     ]
