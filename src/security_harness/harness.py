@@ -8,8 +8,22 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from security_harness.agent import make_llm, make_analysis_agent
 from security_harness.state import State
-from security_harness.tools.files import make_file_tools
+from security_harness.tools.files import make_file_tools, BLOCKED_NAMES, BLOCKED_DIRS
 
+
+SKIP_EXTENSIONS = {
+    # Images
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".ico", ".webp", ".tiff", ".tif", ".heif",
+    # Video
+    ".mp4", ".mov", ".avi", ".mkv", ".webm",
+    # Audio
+    ".mp3", ".wav", ".ogg", ".flac", ".aac",
+    # Documents
+    ".pdf", ".docx", ".doc"
+    # Other
+    ".ttf", ".otf", ".woff", ".woff2", ".eot",
+    ".zip", ".tar", ".gz", ".bz2", ".7z",
+}
 
 PROMPT_BASE = """
 You are working on the security research team. Your task is to find potential security
@@ -120,4 +134,9 @@ def list_tracked_files(repo_path: str | Path) -> list[str]:
         shell=False,
     )
 
-    return result.stdout.splitlines()
+    return [
+        p for p in result.stdout.splitlines()
+        if Path(p).suffix.lower() not in SKIP_EXTENSIONS
+        and Path(p).name not in BLOCKED_NAMES
+        and not any(part in BLOCKED_DIRS for part in Path(p).parts)
+    ]
