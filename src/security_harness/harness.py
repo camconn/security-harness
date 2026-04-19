@@ -195,7 +195,7 @@ def _parse_bug_reports(content: str, primary_file: str) -> list[BugReport]:
     return reports
 
 
-def analysis(state: State, file: FileRanking, agent, src_path: Path) -> list[BugReport]:
+def analysis(file: FileRanking, agent, src_path: Path) -> list[BugReport]:
     system_message = SystemMessage(content=FILE_ANALYSIS_TASK)
     tool_call_id = str(uuid.uuid4())
 
@@ -220,9 +220,7 @@ def analysis(state: State, file: FileRanking, agent, src_path: Path) -> list[Bug
     if isinstance(content, list):
         content = " ".join(p["text"] for p in content if p.get("type") == "text")
 
-    reports = _parse_bug_reports(content, file.path)
-    state.increment_run_count(file.path)
-    return reports
+    return _parse_bug_reports(content, file.path)
 
 
 def _sync_files(state: State, src_path: Path, excludes: list[Path]) -> list[str]:
@@ -247,20 +245,37 @@ def _rank_phase(state: State, src_path: Path, args: Namespace, unranked: list[st
         print(f"  {score:2.1f}  {path}")
 
 
+_ANALYSIS_WORKERS = 6
+
 def _analysis_phase(state: State, src_path: Path, args: Namespace) -> None:
     if args.analysis_count <= 0:
         return
-    agent = make_analysis_agent(make_llm(args.provider, args.model), make_file_tools(src_path))
-    print(f"Running {args.analysis_count} analysis round(s)...")
+
+    # Collect distinct targets in memory without touching the DB.
+    reserved: set[str] = set()
+    targets: list[FileRanking] = []
     for _ in range(args.analysis_count):
-        target = state.next_analysis_target()
+        target = state.next_analysis_target(exclude=reserved)
         if target is None:
             break
-        print(f"Analyzing {target.path}...")
-        reports = analysis(state, target, agent, src_path)
-        for report in reports:
-            bug_id = state.insert_bug_report(report)
-            print(f"  [{bug_id}] {report.severity:.1f}  {report.title}")
+        reserved.add(target.path)
+        targets.append(target)
+
+    if not targets:
+        return
+
+    agent = make_analysis_agent(make_llm(args.provider, args.model), make_file_tools(src_path))
+    print(f"Analyzing {len(targets)} file(s) with {_ANALYSIS_WORKERS} workers...")
+
+    with ThreadPoolExecutor(max_workers=_ANALYSIS_WORKERS) as executor:
+        futures = {executor.submit(analysis, target, agent, src_path): target for target in targets}
+        for future, target in futures.items():
+            print(f"  {target.path}...")
+            reports = future.result()
+            state.increment_run_count(target.path)
+            for report in reports:
+                bug_id = state.insert_bug_report(report)
+                print(f"    [{bug_id}] {report.severity:.1f}  {report.title}")
 
 
 def run_harness(args: Namespace) -> None:

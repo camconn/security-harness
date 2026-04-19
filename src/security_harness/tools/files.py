@@ -24,11 +24,11 @@ def make_file_tools(sandbox_dir: str | Path) -> list:
         """Read a file's contents. Path must be relative to the sandboxed source directory."""
         target = (sandbox / path).resolve()
         if not target.is_relative_to(sandbox):
-            raise PermissionError(f"Access denied: {path!r} is outside the sandbox")
+            return f"Error: {path!r} is outside the sandbox"
         if _is_blocked(target, sandbox):
-            raise PermissionError(f"Access denied: {path!r} is blocked")
+            return f"Error: {path!r} is blocked"
         if not target.is_file():
-            raise FileNotFoundError(f"Not a file: {path!r}")
+            return f"Error: {path!r} is not a file"
         return target.read_text()
 
     @tool
@@ -36,11 +36,11 @@ def make_file_tools(sandbox_dir: str | Path) -> list:
         """List entries in a directory. Path must be relative to the sandboxed source directory."""
         target = (sandbox / path).resolve()
         if not target.is_relative_to(sandbox):
-            raise PermissionError(f"Access denied: {path!r} is outside the sandbox")
+            return f"Error: {path!r} is outside the sandbox"
         if _is_blocked(target, sandbox):
-            raise PermissionError(f"Access denied: {path!r} is blocked")
+            return f"Error: {path!r} is blocked"
         if not target.is_dir():
-            raise NotADirectoryError(f"Not a directory: {path!r}")
+            return f"Error: {path!r} is not a directory"
         entries = sorted(target.iterdir(), key=lambda p: (p.is_file(), p.name))
         return "\n".join(
             str(e.relative_to(sandbox))

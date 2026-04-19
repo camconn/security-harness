@@ -105,16 +105,20 @@ class State:
         )
         self._sqlite_conn.commit()
 
-    def next_analysis_target(self) -> "FileRanking | None":
+    def next_analysis_target(self, exclude: set[str] | None = None) -> "FileRanking | None":
         self.setup_database()
         cur = self._sqlite_conn.cursor()
-        cur.execute("""
+        excluded = exclude or set()
+        # TODO: Handle possible SQLi here
+        exclude_clause = f"AND path NOT IN ({','.join('?' * len(excluded))})" if excluded else ""
+        cur.execute(f"""
             SELECT path, score, run_count
             FROM project_file
             WHERE score > 0
+            {exclude_clause}
             ORDER BY score / (run_count + 1) DESC
             LIMIT 1
-        """)
+        """, list(excluded))
         row = cur.fetchone()
         return FileRanking(path=row[0], score=row[1], run_count=row[2]) if row else None
 
