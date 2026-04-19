@@ -8,6 +8,14 @@ class FileRanking:
     score: float
     run_count: int
 
+@dataclass
+class BugReport:
+    title: str
+    severity: float
+    primary_file: str
+    description: str
+    poc: str
+
 class State:
     src_path: str
     bugs_path: str
@@ -107,6 +115,27 @@ class State:
         """)
         row = cur.fetchone()
         return FileRanking(path=row[0], score=row[1], run_count=row[2]) if row else None
+
+    def insert_bug_report(self, report: BugReport) -> int:
+        self.setup_database()
+        cur = self._sqlite_conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO bug_reports (title, found_at, severity, primary_file, description)
+            VALUES (?, datetime('now'), ?, ?, ?)
+            """,
+            (report.title, report.severity, report.primary_file, report.description),
+        )
+        bug_id = cur.lastrowid
+        cur.execute(
+            """
+            INSERT INTO bug_repro_attempts (bug_report_id, status, poc)
+            VALUES (?, 'pending', ?)
+            """,
+            (bug_id, report.poc),
+        )
+        self._sqlite_conn.commit()
+        return bug_id
 
     def delete_file_ranking(self, path: list[str]) -> None:
         self.setup_database()
