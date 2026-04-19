@@ -1,9 +1,14 @@
 from argparse import Namespace
+from collections.abc import Generator
 from pathlib import Path
+import re
 import subprocess
 
+from langchain_core.messages import HumanMessage, SystemMessage
 
+from security_harness.agent import make_llm, make_analysis_agent
 from security_harness.state import State
+from security_harness.tools.files import make_file_tools
 
 
 PROMPT_BASE = """
@@ -36,8 +41,9 @@ Score: 6.0
 File: README.md
 Score: 0.0
 
-Rank the following:
-File: """
+Use the read_file tool to read the file's contents before scoring it.
+
+Rank the following file:"""
 
 
 def run_harness(args: Namespace) -> None:
@@ -64,15 +70,43 @@ def run_harness(args: Namespace) -> None:
     to_analyze = sorted(src_files - db_paths)
     to_delete = sorted(db_paths - src_files)
 
-    if len(to_delete) > 0:
+    if to_delete:
         print(f"Deleting {len(to_delete)} file(s) from database...")
         state.delete_file_ranking(to_delete)
 
+    if not to_analyze or is_dry_run:
+        return
 
-def rank_files(src_path: str) -> list[tuple[str, float]]:
-    # TODO: Go to src_path and rank files on likelihood
+    llm = make_llm(args.provider, args.model)
+    file_tools = make_file_tools(src_path)
+    agent = make_analysis_agent(llm, file_tools)
 
-    return []
+    print(f"Ranking {len(to_analyze)} new file(s)...")
+    rankings = rank_files(agent, to_analyze)
+    for path, score in rankings:
+        state.insert_file_ranking(path, score)
+        print(f"  {score:.1f}  {path}")
+
+
+def rank_files(agent, files: list[str]) -> Generator[tuple[str, float], None, None]:
+    system_message = SystemMessage(content=FILE_RANK_PROMPT)
+    for path in files:
+        print(f"Ranking {path}")
+        response = agent.invoke({"messages": [
+            system_message,
+            HumanMessage(content=f"File: {path}\nScore:"),
+        ]})
+        last_message = response["messages"][-1]
+        content = last_message.content
+        if isinstance(content, list):
+            content = " ".join(p["text"] for p in content if p.get("type") == "text")
+        match = re.search(r"Score:\s*(\d+(?:\.\d+)?)", content)
+        if match:
+            score = float(match.group(1))
+        else:
+            print(f"Invalid score for {path}: <<{content}>>")
+            score = 0.0
+        yield path, score
 
 def list_tracked_files(repo_path: str | Path) -> list[str]:
     repo_path = Path(repo_path)
