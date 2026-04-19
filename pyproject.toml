@@ -3,3 +3,16 @@ name = "security-harness"
 version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = []
+
+[project.scripts]
+security-harness = "security_harness.main:main"
+
+[tool.uv]
+package = true
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
