@@ -52,7 +52,8 @@ class State:
         cur.execute("""
         CREATE TABLE IF NOT EXISTS bug_repro_attempts(
             id              INTEGER PRIMARY KEY,
-            status          TEXT NOT NULL,
+            bug_report_id   INTEGER NOT NULL REFERENCES bug_reports(id),
+            status          TEXT NOT NULL, -- 'pending', 'success', 'failure'
             reproduced_on   TEXT,
             poc             TEXT
         )
