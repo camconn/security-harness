@@ -86,6 +86,7 @@ class State:
             "ALTER TABLE bug_repro_attempt ADD COLUMN attempt_notes     TEXT",
             "ALTER TABLE bug_repro_attempt ADD COLUMN verification_type TEXT",
             "ALTER TABLE bug_repro_attempt ADD COLUMN working_poc       TEXT",
+            "ALTER TABLE bug_repro_attempt ADD COLUMN raw               TEXT",
         ]:
             try:
                 cur.execute(col_sql)
@@ -204,6 +205,7 @@ class State:
         verification_type: str,
         attempt_notes: str,
         working_poc: str | None,
+        raw: str | None,
     ) -> None:
         self.setup_database()
         cur = self._sqlite_conn.cursor()
@@ -215,10 +217,11 @@ class State:
                 reproduced_on     = CASE WHEN ? = 'success' THEN datetime('now') ELSE reproduced_on END,
                 attempt_notes     = ?,
                 verification_type = ?,
-                working_poc       = ?
+                working_poc       = ?,
+                raw               = ?
             WHERE id = ?
             """,
-            (status, status, attempt_notes, verification_type, working_poc, attempt_id),
+            (status, status, attempt_notes, verification_type, working_poc, raw, attempt_id),
         )
         self._sqlite_conn.commit()
 

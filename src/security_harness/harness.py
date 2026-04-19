@@ -412,7 +412,7 @@ def verify(attempt: ReproAttempt, llm, src_path: Path, *, notes: str | None = No
     if isinstance(content, list):
         content = " ".join(p["text"] for p in content if p.get("type") == "text")
 
-    return _parse_verify_result(content)
+    return content, _parse_verify_result(content)
 
 
 def analysis(file: FileRanking, agent, src_path: Path, *, notes: str | None = None) -> list[BugReport]:
@@ -527,8 +527,8 @@ def _verify_phase(state: State, src_path: Path, args: Namespace, *, notes: str |
             for target in targets
         }
         for future, target in futures.items():
-            result = future.result()
-            if result is None:
+            raw, parsed = future.result()
+            if parsed is None:
                 print(f"  [PARSE ERROR] [{target.bug_report_id}] {target.title}")
                 state.update_repro_attempt(
                     target.id,
@@ -536,9 +536,10 @@ def _verify_phase(state: State, src_path: Path, args: Namespace, *, notes: str |
                     verification_type="unknown",
                     attempt_notes="Verify agent response could not be parsed.",
                     working_poc=None,
+                    raw=raw,
                 )
                 continue
-            verification_type, status, attempt_notes, working_poc = result
+            verification_type, status, attempt_notes, working_poc = parsed
             icon = "+" if status == "success" else "-"
             print(f"  [{icon}] [{target.bug_report_id}] ({verification_type}) {target.title}")
             state.update_repro_attempt(
@@ -547,6 +548,7 @@ def _verify_phase(state: State, src_path: Path, args: Namespace, *, notes: str |
                 verification_type=verification_type,
                 attempt_notes=attempt_notes,
                 working_poc=working_poc,
+                raw=raw,
             )
 
 
