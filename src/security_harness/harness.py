@@ -225,10 +225,45 @@ def analysis(state: State, file: FileRanking, agent, src_path: Path) -> list[Bug
     return reports
 
 
-def run_harness(args: Namespace) -> None:
-    is_dry_run = args.dry_run
-    print(f"Is dry run: {is_dry_run}")
+def _sync_files(state: State, src_path: Path, excludes: list[Path]) -> list[str]:
+    src_files = set(list_tracked_files(src_path, excludes))
+    db_paths = {f.path for f in state.get_file_rankings()}
 
+    to_delete = sorted(db_paths - src_files)
+    if to_delete:
+        print(f"Deleting {len(to_delete)} file(s) from database...")
+        state.delete_file_ranking(to_delete)
+
+    return sorted(src_files - db_paths)
+
+
+def _rank_phase(state: State, src_path: Path, args: Namespace, unranked: list[str]) -> None:
+    if not unranked:
+        return
+    agent = make_analysis_agent(make_llm(args.provider, args.model), make_file_tools(src_path))
+    print(f"Ranking {len(unranked)} new file(s)...")
+    for path, score in rank_files(agent, unranked, src_path):
+        state.insert_file_ranking(path, score)
+        print(f"  {score:2.1f}  {path}")
+
+
+def _analysis_phase(state: State, src_path: Path, args: Namespace) -> None:
+    if args.analysis_count <= 0:
+        return
+    agent = make_analysis_agent(make_llm(args.provider, args.model), make_file_tools(src_path))
+    print(f"Running {args.analysis_count} analysis round(s)...")
+    for _ in range(args.analysis_count):
+        target = state.next_analysis_target()
+        if target is None:
+            break
+        print(f"Analyzing {target.path}...")
+        reports = analysis(state, target, agent, src_path)
+        for report in reports:
+            bug_id = state.insert_bug_report(report)
+            print(f"  [{bug_id}] {report.severity:.1f}  {report.title}")
+
+
+def run_harness(args: Namespace) -> None:
     src_path = Path(args.src).expanduser()
     print(f"Source to examine: {src_path}")
 
@@ -236,54 +271,16 @@ def run_harness(args: Namespace) -> None:
     bugs.mkdir(parents=True, exist_ok=True)
     print(f"Analysis storage: {bugs}")
 
-    state = State(
-        src_path = str(src_path),
-        bugs_path = str(bugs),
-    )
-
+    state = State(src_path=str(src_path), bugs_path=str(bugs))
     excludes = [Path(e) for e in args.excludes]
-    src_files = set(list_tracked_files(src_path, excludes))
-    db_files = {f.path: f for f in state.get_file_rankings()}
-    db_paths = set(db_files.keys())
 
-    to_analyze = sorted(src_files - db_paths)
-    to_delete = sorted(db_paths - src_files)
+    unranked = _sync_files(state, src_path, excludes)
 
-    if to_delete:
-        print(f"Deleting {len(to_delete)} file(s) from database...")
-        state.delete_file_ranking(to_delete)
-
-    if is_dry_run:
+    if args.dry_run:
         return
 
-    # Ranking phase: score any unranked files
-    if to_analyze:
-        llm = make_llm(args.provider, args.model)
-        file_tools = make_file_tools(src_path)
-        agent = make_analysis_agent(llm, file_tools)
-
-        print(f"Ranking {len(to_analyze)} new file(s)...")
-        for path, score in rank_files(agent, to_analyze, src_path):
-            state.insert_file_ranking(path, score)
-            print(f"  {score:2.1f}  {path}")
-
-    # Analysis phase: deep-analyse files by priority
-    if args.analysis_count > 0:
-        print(f"Running {args.analysis_count} analysis round(s)...")
-        llm = make_llm(args.provider, args.model)
-        file_tools = make_file_tools(src_path)
-        analysis_agent = make_analysis_agent(llm, file_tools)
-        for _ in range(args.analysis_count):
-            target = state.next_analysis_target()
-            if target is None:
-                break
-
-            short_name = Path(target.path).name
-            print(f"Analyzing {target.path} ({short_name})...")
-            reports = analysis(state, target, analysis_agent, src_path)
-            for report in reports:
-                bug_id = state.insert_bug_report(report)
-                print(f"  [{bug_id}] {report.severity:.1f} {short_name} {report.title}")
+    _rank_phase(state, src_path, args, unranked)
+    _analysis_phase(state, src_path, args)
 
 
 def rank_files(agent, files: list[str], src_path: Path) -> Generator[tuple[str, float], None, None]:
