@@ -29,6 +29,10 @@ File: src/main/kotlin/com/example/controller/MostMovedStocks.kt
 Score: 1.0
 File: src/main/kotlin/com/example/controller/ChatController.kt
 Score: 6.0
+File: src/main/resources/application.properties
+Score: 6.0
+File: infra/pulumi/__main__.py
+Score: 6.0
 File: README.md
 Score: 0.0
 
