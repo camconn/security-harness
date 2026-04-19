@@ -6,7 +6,8 @@ from pathlib import Path
 import re
 import subprocess
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+import uuid
 
 from security_harness.agent import make_llm, make_analysis_agent
 from security_harness.state import State
@@ -102,21 +103,30 @@ def run_harness(args: Namespace) -> None:
     agent = make_analysis_agent(llm, file_tools)
 
     print(f"Ranking {len(to_analyze)} new file(s)...")
-    rankings = rank_files(agent, to_analyze)
-    for path, score in rankings:
+    for path, score in rank_files(agent, to_analyze, src_path):
         state.insert_file_ranking(path, score)
-        print(f"  {score:.1f}  {path}")
+        print(f"  {score:2.1f}  {path}")
 
 
-def rank_files(agent, files: list[str]) -> Generator[tuple[str, float], None, None]:
+def rank_files(agent, files: list[str], src_path: Path) -> Generator[tuple[str, float], None, None]:
     system_message = SystemMessage(content=FILE_RANK_PROMPT)
     q: Queue[tuple[str, float]] = Queue()
 
     def rank_one(path: str) -> None:
-        print(f"Ranking {path}")
+        tool_call_id = str(uuid.uuid4())
+        try:
+            file_content = (src_path / path).read_text()
+        except Exception as e:
+            file_content = f"Error reading file: {e}"
         response = agent.invoke({"messages": [
             system_message,
             HumanMessage(content=f"File: {path}\nScore:"),
+            AIMessage(content="", tool_calls=[{
+                "id": tool_call_id,
+                "name": "read_file",
+                "args": {"path": path},
+            }]),
+            ToolMessage(content=file_content, tool_call_id=tool_call_id),
         ]})
         last_message = response["messages"][-1]
         content = last_message.content
@@ -129,7 +139,7 @@ def rank_files(agent, files: list[str]) -> Generator[tuple[str, float], None, No
             print(f"Invalid score for {path}: <<{content}>>")
             q.put((path, 0.0))
 
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    with ThreadPoolExecutor(max_workers=8) as executor:
         for path in files:
             executor.submit(rank_one, path)
         for _ in files:
