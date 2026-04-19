@@ -90,9 +90,22 @@ class State:
             SET run_count = run_count + 1
             WHERE path = ?
             """,
-            (path),
+            (path,),
         )
         self._sqlite_conn.commit()
+
+    def next_analysis_target(self) -> "FileRanking | None":
+        self.setup_database()
+        cur = self._sqlite_conn.cursor()
+        cur.execute("""
+            SELECT path, score, run_count
+            FROM project_files
+            WHERE score > 0
+            ORDER BY score / (run_count + 1) DESC
+            LIMIT 1
+        """)
+        row = cur.fetchone()
+        return FileRanking(path=row[0], score=row[1], run_count=row[2]) if row else None
 
     def delete_file_ranking(self, path: list[str]) -> None:
         self.setup_database()

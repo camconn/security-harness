@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 import uuid
 
 from security_harness.agent import make_llm, make_analysis_agent
-from security_harness.state import State
+from security_harness.state import FileRanking, State
 from security_harness.tools.files import make_file_tools, BLOCKED_NAMES, BLOCKED_DIRS
 
 
@@ -63,6 +63,11 @@ Use the read_file tool to read the file's contents before scoring it.
 Rank the following file:"""
 
 
+def analysis(state: State, file: FileRanking) -> None:
+    # TODO: deep vulnerability analysis of file
+    state.increment_run_count(file.path)
+
+
 def run_harness(args: Namespace) -> None:
     is_dry_run = args.dry_run
     print(f"Is dry run: {is_dry_run}")
@@ -83,7 +88,6 @@ def run_harness(args: Namespace) -> None:
     db_files = {f.path: f for f in state.get_file_rankings()}
     db_paths = set(db_files.keys())
 
-    already_ranked = [db_files[p] for p in src_files & db_paths]
     excludes = [Path(e) for e in args.excludes]
     to_analyze = sorted(
         p for p in src_files - db_paths
@@ -95,17 +99,28 @@ def run_harness(args: Namespace) -> None:
         print(f"Deleting {len(to_delete)} file(s) from database...")
         state.delete_file_ranking(to_delete)
 
-    if not to_analyze or is_dry_run:
+    if is_dry_run:
         return
 
-    llm = make_llm(args.provider, args.model)
-    file_tools = make_file_tools(src_path)
-    agent = make_analysis_agent(llm, file_tools)
+    # Ranking phase: score any unranked files
+    if to_analyze:
+        llm = make_llm(args.provider, args.model)
+        file_tools = make_file_tools(src_path)
+        agent = make_analysis_agent(llm, file_tools)
 
-    print(f"Ranking {len(to_analyze)} new file(s)...")
-    for path, score in rank_files(agent, to_analyze, src_path):
-        state.insert_file_ranking(path, score)
-        print(f"  {score:2.1f}  {path}")
+        print(f"Ranking {len(to_analyze)} new file(s)...")
+        for path, score in rank_files(agent, to_analyze, src_path):
+            state.insert_file_ranking(path, score)
+            print(f"  {score:2.1f}  {path}")
+
+    # Analysis phase: deep-analyse files by priority
+    if args.analysis_count > 0:
+        print(f"Running {args.analysis_count} analysis round(s)...")
+        for _ in range(args.analysis_count):
+            target = state.next_analysis_target()
+            if target is None:
+                break
+            analysis(state, target)
 
 
 def rank_files(agent, files: list[str], src_path: Path) -> Generator[tuple[str, float], None, None]:
