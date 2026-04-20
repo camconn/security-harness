@@ -47,7 +47,9 @@
            hx-get="/partials/files"
            hx-trigger="load, every 5s"
            hx-indicator="closest .card"
-           hx-swap="innerHTML">
+           hx-swap="innerHTML"
+           hx-on:htmx:before-swap="this._st = document.getElementById('files-scroll-container')?.scrollTop ?? 0"
+           hx-on:htmx:after-swap="let el=document.getElementById('files-scroll-container'); if(el) el.scrollTop=this._st">
         {% include "partials/files.html" %}
       </div>
     </div>
