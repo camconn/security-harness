@@ -87,6 +87,10 @@ class State:
             "ALTER TABLE bug_repro_attempt ADD COLUMN verification_type TEXT",
             "ALTER TABLE bug_repro_attempt ADD COLUMN working_poc       TEXT",
             "ALTER TABLE bug_repro_attempt ADD COLUMN raw               TEXT",
+            "ALTER TABLE bug_repro_attempt ADD COLUMN invalid           INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE bug_repro_attempt ADD COLUMN invalid_reason    TEXT",
+            "ALTER TABLE bug_report        ADD COLUMN invalid           INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE bug_report        ADD COLUMN invalid_reason    TEXT",
         ]:
             try:
                 cur.execute(col_sql)
@@ -184,7 +188,7 @@ class State:
                    r.title, r.description, r.primary_file, r.severity
             FROM bug_repro_attempt a
             JOIN bug_report r ON r.id = a.bug_report_id
-            WHERE a.status = 'pending'
+            WHERE a.status = 'pending' AND a.invalid = 0 AND r.invalid = 0
             {exclude_clause}
             ORDER BY r.severity DESC, a.id ASC
             LIMIT ?
@@ -240,7 +244,8 @@ class State:
         cur.execute("""
             SELECT r.id, r.title, r.severity, r.primary_file, r.found_at, r.description,
                    a.id, a.status, a.verification_type, a.reproduced_on,
-                   a.attempt_notes, a.working_poc, a.poc, a.raw
+                   a.attempt_notes, a.working_poc, a.poc, a.raw,
+                   r.invalid, r.invalid_reason, a.invalid, a.invalid_reason
             FROM bug_repro_attempt a
             JOIN bug_report r ON r.id = a.bug_report_id
             WHERE a.id = ?
@@ -254,6 +259,8 @@ class State:
             "attempt_id": row[6], "status": row[7], "verification_type": row[8],
             "reproduced_on": row[9], "attempt_notes": row[10],
             "working_poc": row[11], "poc": row[12], "raw": row[13],
+            "bug_invalid": bool(row[14]), "bug_invalid_reason": row[15],
+            "attempt_invalid": bool(row[16]), "attempt_invalid_reason": row[17],
         }
 
     def get_bug_reports_with_repro(self) -> list[dict]:
@@ -261,7 +268,8 @@ class State:
         cur = self._sqlite_conn.cursor()
         cur.execute("""
             SELECT r.id, r.title, r.severity, r.primary_file, r.found_at,
-                   a.id, a.status, a.verification_type, a.reproduced_on, a.attempt_notes
+                   a.id, a.status, a.verification_type, a.reproduced_on, a.attempt_notes,
+                   r.invalid, r.invalid_reason, a.invalid, a.invalid_reason
             FROM bug_report r
             LEFT JOIN bug_repro_attempt a ON a.bug_report_id = r.id
             ORDER BY r.severity DESC, r.id ASC
@@ -273,6 +281,9 @@ class State:
                 "attempt_id": row[5], "status": row[6],
                 "verification_type": row[7], "reproduced_on": row[8],
                 "attempt_notes": row[9],
+                "bug_invalid": bool(row[10]), "bug_invalid_reason": row[11],
+                "attempt_invalid": bool(row[12]) if row[12] is not None else False,
+                "attempt_invalid_reason": row[13],
             }
             for row in cur.fetchall()
         ]
@@ -298,6 +309,30 @@ class State:
             }
             for row in cur.fetchall()
         ]
+
+    def mark_bug_invalid(self, bug_id: int, reason: str) -> None:
+        self.setup_database()
+        cur = self._sqlite_conn.cursor()
+        cur.execute("UPDATE bug_report SET invalid = 1, invalid_reason = ? WHERE id = ?", (reason, bug_id))
+        self._sqlite_conn.commit()
+
+    def mark_bug_valid(self, bug_id: int) -> None:
+        self.setup_database()
+        cur = self._sqlite_conn.cursor()
+        cur.execute("UPDATE bug_report SET invalid = 0, invalid_reason = NULL WHERE id = ?", (bug_id,))
+        self._sqlite_conn.commit()
+
+    def mark_attempt_invalid(self, attempt_id: int, reason: str) -> None:
+        self.setup_database()
+        cur = self._sqlite_conn.cursor()
+        cur.execute("UPDATE bug_repro_attempt SET invalid = 1, invalid_reason = ? WHERE id = ?", (reason, attempt_id))
+        self._sqlite_conn.commit()
+
+    def mark_attempt_valid(self, attempt_id: int) -> None:
+        self.setup_database()
+        cur = self._sqlite_conn.cursor()
+        cur.execute("UPDATE bug_repro_attempt SET invalid = 0, invalid_reason = NULL WHERE id = ?", (attempt_id,))
+        self._sqlite_conn.commit()
 
     def delete_file_ranking(self, path: list[str]) -> None:
         self.setup_database()

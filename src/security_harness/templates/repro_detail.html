@@ -28,6 +28,44 @@
             <div class="mt-1">
               <span class="badge bg-success">reproduced</span>
               <span class="badge bg-secondary">{{ bug.verification_type or 'unknown' }}</span>
+              {% if bug.bug_invalid %}
+                <span class="badge bg-secondary"
+                      {% if bug.bug_invalid_reason %}title="{{ bug.bug_invalid_reason }}"{% endif %}>
+                  bug invalid
+                </span>
+              {% endif %}
+              {% if bug.attempt_invalid %}
+                <span class="badge bg-secondary"
+                      {% if bug.attempt_invalid_reason %}title="{{ bug.attempt_invalid_reason }}"{% endif %}>
+                  attempt invalid
+                </span>
+              {% endif %}
+            </div>
+            <div class="mt-2 d-flex gap-2 justify-content-end flex-wrap">
+              {% if bug.bug_invalid %}
+                <form method="post" action="/bugs/{{ bug.bug_id }}/valid">
+                  <button type="submit" class="btn btn-sm btn-outline-secondary">Mark Bug Valid</button>
+                </form>
+              {% else %}
+                <button class="btn btn-sm btn-outline-warning"
+                        data-bs-toggle="modal" data-bs-target="#invalidateReproModal"
+                        data-action="/bugs/{{ bug.bug_id }}/invalid"
+                        data-title="Invalidate Bug">
+                  Invalidate Bug
+                </button>
+              {% endif %}
+              {% if bug.attempt_invalid %}
+                <form method="post" action="/repro/{{ bug.attempt_id }}/valid">
+                  <button type="submit" class="btn btn-sm btn-outline-secondary">Mark Attempt Valid</button>
+                </form>
+              {% else %}
+                <button class="btn btn-sm btn-outline-warning"
+                        data-bs-toggle="modal" data-bs-target="#invalidateReproModal"
+                        data-action="/repro/{{ bug.attempt_id }}/invalid"
+                        data-title="Invalidate Attempt">
+                  Invalidate Attempt
+                </button>
+              {% endif %}
             </div>
           </div>
         </div>
@@ -97,5 +135,34 @@
   {% endif %}
 
 </div>
+<!-- Invalidation Modal -->
+<div class="modal fade" id="invalidateReproModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content" style="background: #161b22; border: 1px solid #30363d;">
+      <div class="modal-header" style="border-color: #30363d;">
+        <h5 class="modal-title" id="invalidateReproTitle" style="color: #e6edf3;">Invalidate</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <form id="invalidateReproForm" method="post" action="">
+        <div class="modal-body">
+          <label class="form-label" style="color: #e6edf3;">Reason <span class="text-muted">(optional)</span></label>
+          <textarea class="form-control" name="reason" rows="3"
+                    style="background: #0d1117; color: #e6edf3; border-color: #30363d;"
+                    placeholder="Why is this invalid?"></textarea>
+        </div>
+        <div class="modal-footer" style="border-color: #30363d;">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-warning btn-sm">Invalidate</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+  document.getElementById('invalidateReproModal').addEventListener('show.bs.modal', function(e) {
+    document.getElementById('invalidateReproTitle').textContent = e.relatedTarget.dataset.title || 'Invalidate';
+    document.getElementById('invalidateReproForm').action = e.relatedTarget.dataset.action;
+  });
+</script>
 {% endblock %}

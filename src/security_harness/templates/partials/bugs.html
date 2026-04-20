@@ -23,11 +23,12 @@
         <th>File</th>
         <th>Status</th>
         <th>Found</th>
+        <th></th>
       </tr>
     </thead>
     <tbody>
       {% for b in bugs %}
-      <tr>
+      <tr{% if b.bug_invalid %} style="opacity: 0.5;"{% endif %}>
         <td class="text-muted">{{ b.bug_id }}</td>
         <td>{{ severity_badge(b.severity) }}</td>
         <td>
@@ -39,7 +40,17 @@
         </td>
         <td><code class="small">{{ b.primary_file }}</code></td>
         <td>
-          {% if b.status == 'success' %}
+          {% if b.bug_invalid %}
+            <span class="badge bg-secondary"
+                  {% if b.bug_invalid_reason %}title="{{ b.bug_invalid_reason }}"{% endif %}>
+              invalid
+            </span>
+          {% elif b.attempt_invalid %}
+            <span class="badge bg-secondary"
+                  {% if b.attempt_invalid_reason %}title="{{ b.attempt_invalid_reason }}"{% endif %}>
+              attempt invalid
+            </span>
+          {% elif b.status == 'success' %}
             <span class="badge bg-success">reproduced</span>
           {% elif b.status == 'failure' %}
             <span class="badge bg-danger">failed</span>
@@ -50,6 +61,23 @@
           {% endif %}
         </td>
         <td class="text-muted small">{{ b.found_at or '—' }}</td>
+        <td class="text-end" style="white-space: nowrap;">
+          {% if b.bug_invalid %}
+            <button class="btn btn-sm btn-outline-secondary py-0 px-2"
+                    hx-post="/bugs/{{ b.bug_id }}/valid"
+                    hx-target="#bugs-card-body"
+                    hx-swap="innerHTML">
+              Mark Valid
+            </button>
+          {% else %}
+            <button class="btn btn-sm btn-outline-warning py-0 px-2"
+                    data-bs-toggle="modal"
+                    data-bs-target="#invalidateBugModal"
+                    data-bug-id="{{ b.bug_id }}">
+              Invalidate
+            </button>
+          {% endif %}
+        </td>
       </tr>
       {% endfor %}
     </tbody>

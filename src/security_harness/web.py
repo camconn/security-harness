@@ -1,8 +1,8 @@
 from pathlib import Path
 
 import markdown as md
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 
@@ -101,5 +101,31 @@ def create_app(state: State, live: LiveState) -> FastAPI:
         if bug is None:
             raise HTTPException(status_code=404, detail="Not found")
         return templates.TemplateResponse(request, "repro_detail.html", {"bug": bug})
+
+    @app.post("/bugs/{bug_id}/invalid", response_class=HTMLResponse)
+    async def bug_mark_invalid(request: Request, bug_id: int, reason: str = Form("")):
+        state.mark_bug_invalid(bug_id, reason)
+        if request.headers.get("HX-Request"):
+            bugs = state.get_bug_reports_with_repro()
+            return templates.TemplateResponse(request, "partials/bugs.html", {"bugs": bugs})
+        return RedirectResponse(request.headers.get("referer", "/"), status_code=303)
+
+    @app.post("/bugs/{bug_id}/valid", response_class=HTMLResponse)
+    async def bug_mark_valid(request: Request, bug_id: int):
+        state.mark_bug_valid(bug_id)
+        if request.headers.get("HX-Request"):
+            bugs = state.get_bug_reports_with_repro()
+            return templates.TemplateResponse(request, "partials/bugs.html", {"bugs": bugs})
+        return RedirectResponse(request.headers.get("referer", "/"), status_code=303)
+
+    @app.post("/repro/{attempt_id}/invalid")
+    async def attempt_mark_invalid(attempt_id: int, reason: str = Form("")):
+        state.mark_attempt_invalid(attempt_id, reason)
+        return RedirectResponse(f"/repro/{attempt_id}", status_code=303)
+
+    @app.post("/repro/{attempt_id}/valid")
+    async def attempt_mark_valid(attempt_id: int):
+        state.mark_attempt_valid(attempt_id)
+        return RedirectResponse(f"/repro/{attempt_id}", status_code=303)
 
     return app
