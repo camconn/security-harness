@@ -322,10 +322,53 @@ Proof of Concept:
 Verify: """
 
 
+DEDUP_TASK = """\
+You are comparing two security vulnerability reports to determine if they describe the
+same underlying vulnerability (same root cause, same attack surface, same fix).
+
+Minor wording differences, severity differences, or different file names do not matter —
+focus on whether an engineer would file them as one ticket or two.
+
+Bug A:
+Title: {title_a}
+File: {file_a}
+Description: {desc_a}
+
+Bug B:
+Title: {title_b}
+File: {file_b}
+Description: {desc_b}
+
+Respond with exactly:
+Duplicate: yes|no
+Reasoning: <one sentence>
+"""
+
+
+def _parse_dedup_result(content: str) -> bool:
+    m = re.search(r"Duplicate:\s*(yes|no)", content, re.IGNORECASE)
+    return bool(m and m.group(1).lower() == "yes")
+
+
+def check_duplicate(bug: BugReport, candidates: list[tuple[int, BugReport]], llm) -> int | None:
+    for candidate_id, candidate in candidates:
+        prompt = DEDUP_TASK.format(
+            title_a=bug.title, file_a=bug.primary_file, desc_a=bug.description,
+            title_b=candidate.title, file_b=candidate.primary_file, desc_b=candidate.description,
+        )
+        response = llm.invoke([HumanMessage(content=prompt)])
+        content = response.content
+        if isinstance(content, list):
+            content = " ".join(p["text"] for p in content if p.get("type") == "text")
+        if _parse_dedup_result(content):
+            return candidate_id
+    return None
+
+
 def _parse_bug_reports(content: str, primary_file: str) -> list[BugReport]:
     reports = []
     for block in content.split("<next>"):
-        status_match = re.search(r"Status:\s*(\w+)", block)
+        status_match = re.search(r'Status:\s*"?(\w+)', block)
         if not status_match or status_match.group(1).lower() == "failed":
             continue
         title_match = re.search(r"Title:\s*(.+)", block)
@@ -484,7 +527,8 @@ def _analysis_phase(state: State, src_path: Path, args: Namespace, *, notes: str
     if not targets:
         return
 
-    agent = make_analysis_agent(make_llm(args.provider, args.model), make_file_tools(src_path))
+    llm = make_llm(args.provider, args.model)
+    agent = make_analysis_agent(llm, make_file_tools(src_path))
     print(f"Analyzing {len(targets)} file(s) with {_ANALYSIS_WORKERS} workers...")
 
     with ThreadPoolExecutor(max_workers=_ANALYSIS_WORKERS) as executor:
@@ -494,7 +538,12 @@ def _analysis_phase(state: State, src_path: Path, args: Namespace, *, notes: str
             state.increment_run_count(target.path)
             if reports:
                 print(f"  {target.path}")
+            canonical = state.get_canonical_bug_reports()
             for report in reports:
+                dup_id = check_duplicate(report, canonical, llm)
+                if dup_id is not None:
+                    print(f"    [dup] {report.title} -> [{dup_id}]")
+                    continue
                 bug_id = state.insert_bug_report(report)
                 print(f"    [{bug_id}] {report.severity:.1f}  {report.title}")
 

@@ -225,6 +225,15 @@ class State:
         )
         self._sqlite_conn.commit()
 
+    def get_canonical_bug_reports(self) -> list[tuple[int, "BugReport"]]:
+        self.setup_database()
+        cur = self._sqlite_conn.cursor()
+        cur.execute("SELECT id, title, severity, primary_file, description FROM bug_report")
+        return [
+            (row[0], BugReport(title=row[1], severity=row[2], primary_file=row[3], description=row[4], poc="", raw=""))
+            for row in cur.fetchall()
+        ]
+
     def delete_file_ranking(self, path: list[str]) -> None:
         self.setup_database()
         cur = self._sqlite_conn.cursor()
