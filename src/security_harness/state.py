@@ -44,7 +44,7 @@ class State:
     def setup_database(self):
         if self._sqlite_conn is None:
             sqlite_file = str(Path(self.bugs_path) / self._sqlite_name)
-            self._sqlite_conn = sqlite3.connect(sqlite_file)
+            self._sqlite_conn = sqlite3.connect(sqlite_file, check_same_thread=False)
         else:
             # Already set up the database
             return
@@ -231,6 +231,71 @@ class State:
         cur.execute("SELECT id, title, severity, primary_file, description FROM bug_report")
         return [
             (row[0], BugReport(title=row[1], severity=row[2], primary_file=row[3], description=row[4], poc="", raw=""))
+            for row in cur.fetchall()
+        ]
+
+    def get_repro_detail(self, attempt_id: int) -> dict | None:
+        self.setup_database()
+        cur = self._sqlite_conn.cursor()
+        cur.execute("""
+            SELECT r.id, r.title, r.severity, r.primary_file, r.found_at, r.description,
+                   a.id, a.status, a.verification_type, a.reproduced_on,
+                   a.attempt_notes, a.working_poc, a.poc, a.raw
+            FROM bug_repro_attempt a
+            JOIN bug_report r ON r.id = a.bug_report_id
+            WHERE a.id = ?
+        """, (attempt_id,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "bug_id": row[0], "title": row[1], "severity": row[2],
+            "primary_file": row[3], "found_at": row[4], "description": row[5],
+            "attempt_id": row[6], "status": row[7], "verification_type": row[8],
+            "reproduced_on": row[9], "attempt_notes": row[10],
+            "working_poc": row[11], "poc": row[12], "raw": row[13],
+        }
+
+    def get_bug_reports_with_repro(self) -> list[dict]:
+        self.setup_database()
+        cur = self._sqlite_conn.cursor()
+        cur.execute("""
+            SELECT r.id, r.title, r.severity, r.primary_file, r.found_at,
+                   a.id, a.status, a.verification_type, a.reproduced_on, a.attempt_notes
+            FROM bug_report r
+            LEFT JOIN bug_repro_attempt a ON a.bug_report_id = r.id
+            ORDER BY r.severity DESC, r.id ASC
+        """)
+        return [
+            {
+                "bug_id": row[0], "title": row[1], "severity": row[2],
+                "primary_file": row[3], "found_at": row[4],
+                "attempt_id": row[5], "status": row[6],
+                "verification_type": row[7], "reproduced_on": row[8],
+                "attempt_notes": row[9],
+            }
+            for row in cur.fetchall()
+        ]
+
+    def get_reproduced_bugs(self) -> list[dict]:
+        self.setup_database()
+        cur = self._sqlite_conn.cursor()
+        cur.execute("""
+            SELECT r.id, r.title, r.severity, r.primary_file, r.found_at,
+                   a.id, a.verification_type, a.reproduced_on, a.attempt_notes, a.working_poc
+            FROM bug_report r
+            JOIN bug_repro_attempt a ON a.bug_report_id = r.id
+            WHERE a.status = 'success'
+            ORDER BY r.severity DESC, a.reproduced_on DESC
+        """)
+        return [
+            {
+                "bug_id": row[0], "title": row[1], "severity": row[2],
+                "primary_file": row[3], "found_at": row[4],
+                "attempt_id": row[5], "verification_type": row[6],
+                "reproduced_on": row[7], "attempt_notes": row[8],
+                "working_poc": row[9],
+            }
             for row in cur.fetchall()
         ]
 

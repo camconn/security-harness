@@ -1,0 +1,26 @@
+{% if not analysis_active and not verify_active %}
+  <p class="text-muted mb-0">No files currently being processed.</p>
+{% else %}
+  {% if analysis_active %}
+  <p class="text-muted small mb-1">Analysis</p>
+  <ul class="list-unstyled mb-3">
+    {% for path in analysis_active %}
+    <li class="d-flex align-items-center gap-2 mb-1">
+      <span class="spinner-grow spinner-grow-sm text-warning" role="status"></span>
+      <code>{{ path }}</code>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if verify_active %}
+  <p class="text-muted small mb-1">Verification (attempt IDs)</p>
+  <ul class="list-unstyled mb-0">
+    {% for aid in verify_active %}
+    <li class="d-flex align-items-center gap-2 mb-1">
+      <span class="spinner-grow spinner-grow-sm text-info" role="status"></span>
+      <code>#{{ aid }}</code>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+{% endif %}

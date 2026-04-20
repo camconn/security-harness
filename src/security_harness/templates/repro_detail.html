@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="mb-3">
+  <a href="/" style="color: #58a6ff; text-decoration: none;">&larr; Back to dashboard</a>
+</div>
+
+<div class="row g-4">
+
+  <!-- Header -->
+  <div class="col-12">
+    <div class="card">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start">
+          <div>
+            <h4 class="mb-1" style="color: #e6edf3;">{{ bug.title }}</h4>
+            <code style="color: #8b949e;">{{ bug.primary_file }}</code>
+          </div>
+          <div class="text-end">
+            {% if bug.severity >= 9 %}
+              <span class="badge badge-critical fs-6">{{ "%.1f"|format(bug.severity) }} Critical</span>
+            {% elif bug.severity >= 7 %}
+              <span class="badge badge-high fs-6">{{ "%.1f"|format(bug.severity) }} High</span>
+            {% elif bug.severity >= 4 %}
+              <span class="badge badge-medium fs-6">{{ "%.1f"|format(bug.severity) }} Medium</span>
+            {% else %}
+              <span class="badge badge-low fs-6">{{ "%.1f"|format(bug.severity) }} Low</span>
+            {% endif %}
+            <div class="mt-1">
+              <span class="badge bg-success">reproduced</span>
+              <span class="badge bg-secondary">{{ bug.verification_type or 'unknown' }}</span>
+            </div>
+          </div>
+        </div>
+        <div class="mt-2" style="color: #8b949e; font-size: 0.85rem;">
+          Found {{ bug.found_at or '?' }} &mdash; Reproduced {{ bug.reproduced_on or '?' }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Description -->
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header fw-semibold">Description</div>
+      <div class="card-body" style="color: #e6edf3; white-space: pre-wrap;">{{ bug.description or '—' }}</div>
+    </div>
+  </div>
+
+  <!-- Verification Notes -->
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header fw-semibold">Verification Notes</div>
+      <div class="card-body" style="color: #e6edf3; white-space: pre-wrap;">{{ bug.attempt_notes or '—' }}</div>
+    </div>
+  </div>
+
+  <!-- Original PoC -->
+  {% if bug.poc and bug.poc != 'N/A' %}
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header fw-semibold">Original Proof of Concept</div>
+      <div class="card-body p-0">
+        <pre class="m-0 p-3" style="border: none; border-radius: 0 0 6px 6px; min-height: 600px; overflow-y: auto; resize: vertical;">{{ bug.poc }}</pre>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Working PoC -->
+  {% if bug.working_poc %}
+  <div class="col-12">
+    <div class="card" style="border-color: #238636;">
+      <div class="card-header fw-semibold" style="border-color: #238636;">Working Proof of Concept</div>
+      <div class="card-body p-0">
+        <pre class="m-0 p-3" style="border: none; border-radius: 0 0 6px 6px; min-height: 600px; overflow-y: auto; resize: vertical;">{{ bug.working_poc }}</pre>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Raw LLM response -->
+  {% if bug.raw %}
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header fw-semibold">
+        <a class="text-muted" data-bs-toggle="collapse" href="#rawCollapse" style="text-decoration:none; cursor:pointer;">
+          Raw Agent Response &#x25BE;
+        </a>
+      </div>
+      <div class="collapse" id="rawCollapse">
+        <div class="card-body p-0">
+          <pre class="m-0 p-3" style="border: none; border-radius: 0 0 6px 6px; max-height: 600px;">{{ bug.raw }}</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+{% endblock %}

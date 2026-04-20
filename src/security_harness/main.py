@@ -1,6 +1,13 @@
 import argparse
+import threading
+from pathlib import Path
+
+import uvicorn
 
 from security_harness.harness import run_harness
+from security_harness.live_state import LiveState
+from security_harness.state import State
+from security_harness.web import create_app
 
 
 def main():
@@ -20,10 +27,34 @@ def main():
     parser.add_argument("--model", type=str, default="gpt-5.4", help="Model name for the chosen provider")
     parser.add_argument("--dedup", action="store_true", default=False, help="Enable LLM-based duplicate detection when storing new bug reports")
     parser.add_argument("--dedup_batch_size", type=int, default=10, metavar="N", help="Number of existing bug reports compared per LLM call during dedup (default: 10)")
+    parser.add_argument("--web_port", type=int, default=9999, metavar="PORT", help="Port for the web dashboard (0 = disabled, default: 9999)")
 
     args = parser.parse_args()
-    run_harness(args)
 
+    bugs = Path(args.bugs).expanduser()
+    bugs.mkdir(parents=True, exist_ok=True)
+
+    live = LiveState()
+    state = State(src_path=str(Path(args.src).expanduser()), bugs_path=str(bugs))
+    state.setup_database()
+
+    server = None
+    if args.web_port:
+        app = create_app(state, live)
+        config = uvicorn.Config(app, host="0.0.0.0", port=args.web_port, log_level="warning")
+        server = uvicorn.Server(config)
+        server.install_signal_handlers = False
+        web_thread = threading.Thread(target=server.run, daemon=True)
+        web_thread.start()
+        print(f"Web dashboard: http://localhost:{args.web_port}")
+
+    try:
+        run_harness(args, live=live)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if server is not None:
+            server.should_exit = True
 
 
 if __name__ == "__main__":

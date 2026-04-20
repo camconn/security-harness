@@ -1,0 +1,30 @@
+{% macro worker_card(label, pool) %}
+{% set is_idle = pool.phase == "idle" or pool.capacity == 0 %}
+{% set pct = (pool.active / pool.capacity * 100) | int if pool.capacity > 0 else 0 %}
+<div class="card mb-2 worker-card {{ 'idle' if is_idle else 'busy' }}">
+  <div class="card-body py-2">
+    <div class="d-flex justify-content-between align-items-center mb-1">
+      <span class="fw-semibold">{{ label }}</span>
+      {% if is_idle %}
+        <span class="badge bg-secondary">idle</span>
+      {% else %}
+        <span class="badge bg-warning text-dark">{{ pool.active }} / {{ pool.capacity }} active</span>
+      {% endif %}
+    </div>
+    {% if not is_idle %}
+    <div class="progress" style="height: 6px;">
+      <div class="progress-bar bg-warning" style="width: {{ pct }}%"></div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endmacro %}
+
+<div class="row g-3">
+  <div class="col-md-6">
+    {{ worker_card("Analysis Workers", analysis_workers) }}
+  </div>
+  <div class="col-md-6">
+    {{ worker_card("Verify Workers", verify_workers) }}
+  </div>
+</div>

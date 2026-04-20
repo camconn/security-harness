@@ -1,0 +1,34 @@
+{% if not files %}
+  <p class="text-muted p-3 mb-0">No files ranked yet.</p>
+{% else %}
+<div style="max-height: 400px; overflow-y: auto;">
+  <table class="table table-sm table-striped mb-0">
+    <thead class="sticky-top" style="background: #21262d;">
+      <tr>
+        <th>Score</th>
+        <th>Runs</th>
+        <th>Path</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for f in files %}
+      <tr>
+        <td>
+          {% if f.score >= 8 %}
+            <span class="badge badge-critical">{{ "%.1f"|format(f.score) }}</span>
+          {% elif f.score >= 6 %}
+            <span class="badge badge-high">{{ "%.1f"|format(f.score) }}</span>
+          {% elif f.score >= 4 %}
+            <span class="badge badge-medium">{{ "%.1f"|format(f.score) }}</span>
+          {% else %}
+            <span class="badge badge-low">{{ "%.1f"|format(f.score) }}</span>
+          {% endif %}
+        </td>
+        <td><span class="text-muted">{{ f.run_count }}</span></td>
+        <td><code class="small">{{ f.path }}</code></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}

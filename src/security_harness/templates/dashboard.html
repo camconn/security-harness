@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row g-4">
+
+  <!-- Worker Status -->
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span class="fw-semibold">Worker Pools</span>
+        <span class="spinner-border spinner-border-sm text-secondary htmx-indicator" role="status"></span>
+      </div>
+      <div class="card-body"
+           hx-get="/partials/workers"
+           hx-trigger="load, every 3s"
+           hx-indicator="closest .card"
+           hx-swap="innerHTML">
+        {% include "partials/workers.html" %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Active Files -->
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span class="fw-semibold">Currently Analyzing</span>
+        <span class="spinner-border spinner-border-sm text-secondary htmx-indicator" role="status"></span>
+      </div>
+      <div class="card-body"
+           hx-get="/partials/active"
+           hx-trigger="load, every 3s"
+           hx-indicator="closest .card"
+           hx-swap="innerHTML">
+        {% include "partials/active.html" %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Files Analyzed -->
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span class="fw-semibold">Files Ranked</span>
+        <span class="spinner-border spinner-border-sm text-secondary htmx-indicator" role="status"></span>
+      </div>
+      <div class="card-body p-0"
+           hx-get="/partials/files"
+           hx-trigger="load, every 5s"
+           hx-indicator="closest .card"
+           hx-swap="innerHTML">
+        {% include "partials/files.html" %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Bug Reports -->
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span class="fw-semibold">Bug Reports</span>
+        <span class="spinner-border spinner-border-sm text-secondary htmx-indicator" role="status"></span>
+      </div>
+      <div class="card-body p-0"
+           hx-get="/partials/bugs"
+           hx-trigger="load, every 5s"
+           hx-indicator="closest .card"
+           hx-swap="innerHTML">
+        {% include "partials/bugs.html" %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Reproduced Bugs -->
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span class="fw-semibold">Reproduced Bugs</span>
+        <span class="spinner-border spinner-border-sm text-secondary htmx-indicator" role="status"></span>
+      </div>
+      <div class="card-body p-0"
+           hx-get="/partials/reproduced"
+           hx-trigger="load, every 5s"
+           hx-indicator="closest .card"
+           hx-swap="innerHTML">
+        {% include "partials/reproduced.html" %}
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

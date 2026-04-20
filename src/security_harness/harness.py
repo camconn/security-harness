@@ -1,6 +1,8 @@
 from argparse import Namespace
 from collections.abc import Generator
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
+import threading
+import time
 from queue import Queue
 from pathlib import Path
 import re
@@ -11,6 +13,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 import uuid
 
 from security_harness.agent import make_llm, make_analysis_agent
+from security_harness.live_state import LiveState
 from security_harness.state import BugReport, FileRanking, ReproAttempt, State
 from security_harness.tools.files import make_file_tools, BLOCKED_NAMES, BLOCKED_DIRS
 from security_harness.tools.local import make_sandbox_tools
@@ -518,9 +521,9 @@ def _rank_phase(state: State, src_path: Path, args: Namespace, unranked: list[st
         print(f"  {score:2.1f}  {path}")
 
 
-_ANALYSIS_WORKERS = 6
+_ANALYSIS_WORKERS = 8
 
-def _analysis_phase(state: State, src_path: Path, args: Namespace, *, notes: str | None = None) -> None:
+def _analysis_phase(state: State, src_path: Path, args: Namespace, *, notes: str | None = None, live: LiveState | None = None) -> None:
     if args.analysis_count <= 0:
         return
 
@@ -541,10 +544,28 @@ def _analysis_phase(state: State, src_path: Path, args: Namespace, *, notes: str
     agent = make_analysis_agent(llm, make_file_tools(src_path))
     print(f"Analyzing {len(targets)} file(s) with {_ANALYSIS_WORKERS} workers...")
 
+    if live:
+        live.set_analysis_workers(active=0, capacity=len(targets))
+
     with ThreadPoolExecutor(max_workers=_ANALYSIS_WORKERS) as executor:
-        futures = {executor.submit(analysis, target, agent, src_path, notes=notes): target for target in targets}
-        for future, target in futures.items():
+        in_flight: dict = {}
+        for target in targets:
+            if live:
+                live.add_active_file(target.path)
+            fut = executor.submit(analysis, target, agent, src_path, notes=notes)
+            in_flight[fut] = target
+
+        if live:
+            live.set_analysis_workers(active=len(in_flight), capacity=len(targets))
+
+        for future, target in in_flight.items():
             reports = future.result()
+            if live:
+                live.remove_active_file(target.path)
+                live.set_analysis_workers(
+                    active=sum(1 for f in in_flight if not f.done()),
+                    capacity=len(targets),
+                )
             state.increment_run_count(target.path)
             if reports:
                 print(f"  {target.path}")
@@ -557,61 +578,87 @@ def _analysis_phase(state: State, src_path: Path, args: Namespace, *, notes: str
                 bug_id = state.insert_bug_report(report)
                 print(f"    [{bug_id}] {report.severity:.1f}  {report.title}")
 
+    if live:
+        live.set_analysis_workers(active=0, capacity=0, phase="idle")
 
-_VERIFY_WORKERS = 6
 
-def _verify_phase(state: State, src_path: Path, args: Namespace, *, notes: str | None = None, verify_instructions: str | None = None) -> None:
+_VERIFY_WORKERS = 3
+
+def _verify_phase(state: State, src_path: Path, args: Namespace, *, notes: str | None = None, verify_instructions: str | None = None, analysis_done: threading.Event, live: LiveState | None = None) -> None:
     if args.verify_count <= 0:
         return
 
     reserved: set[int] = set()
-    targets: list[ReproAttempt] = []
-    for _ in range(args.verify_count):
-        batch = state.get_pending_repro_attempts(limit=1, exclude=reserved)
-        if not batch:
-            break
-        attempt = batch[0]
-        reserved.add(attempt.id)
-        targets.append(attempt)
-
-    if not targets:
-        return
-
+    verified = 0
+    in_flight: dict = {}  # future -> ReproAttempt
     llm = make_llm(args.provider, args.model)
-    print(f"Verifying {len(targets)} bug report(s) with {_VERIFY_WORKERS} workers...")
+    print(f"Verifying up to {args.verify_count} bug report(s) with {_VERIFY_WORKERS} workers...")
 
-    with ThreadPoolExecutor(max_workers=_VERIFY_WORKERS) as executor:
-        futures = {
-            executor.submit(verify, target, llm, src_path, notes=notes, verify_instructions=verify_instructions): target
-            for target in targets
-        }
-        for future, target in futures.items():
-            raw, parsed = future.result()
-            if parsed is None:
-                print(f"  [PARSE ERROR] [{target.bug_report_id}] {target.title}")
-                state.update_repro_attempt(
-                    target.id,
-                    status="failure",
-                    verification_type="unknown",
-                    attempt_notes="Verify agent response could not be parsed.",
-                    working_poc=None,
-                    raw=raw,
-                )
-                continue
-            verification_type, status, attempt_notes, working_poc = parsed
-            icon = "+" if status == "success" else "-"
-            print(f"  [{icon}] [{target.bug_report_id}] ({verification_type}) {target.title}")
+    def _handle(target: ReproAttempt, raw: str, parsed) -> None:
+        if live:
+            live.remove_active_verify(target.id)
+        if parsed is None:
+            print(f"  [PARSE ERROR] [{target.bug_report_id}] {target.title}")
             state.update_repro_attempt(
                 target.id,
-                status=status,
-                verification_type=verification_type,
-                attempt_notes=attempt_notes,
-                working_poc=working_poc,
+                status="failure",
+                verification_type="unknown",
+                attempt_notes="Verify agent response could not be parsed.",
+                working_poc=None,
                 raw=raw,
             )
+            return
+        verification_type, status, attempt_notes, working_poc = parsed
+        icon = "+" if status == "success" else "-"
+        print(f"  [{icon}] [{target.bug_report_id}] ({verification_type}) {target.title}")
+        state.update_repro_attempt(
+            target.id,
+            status=status,
+            verification_type=verification_type,
+            attempt_notes=attempt_notes,
+            working_poc=working_poc,
+            raw=raw,
+        )
+
+    if live:
+        live.set_verify_workers(active=0, capacity=_VERIFY_WORKERS)
+
+    with ThreadPoolExecutor(max_workers=_VERIFY_WORKERS) as executor:
+        while verified < args.verify_count:
+            # Drain completed futures
+            for f in [f for f in in_flight if f.done()]:
+                target = in_flight.pop(f)
+                _handle(target, *f.result())
+                verified += 1
+
+            # Fill free worker slots
+            free = _VERIFY_WORKERS - len(in_flight)
+            cap = min(free, args.verify_count - verified - len(in_flight))
+            if cap > 0:
+                for attempt in state.get_pending_repro_attempts(limit=cap, exclude=reserved):
+                    reserved.add(attempt.id)
+                    if live:
+                        live.add_active_verify(attempt.id)
+                    in_flight[executor.submit(
+                        verify, attempt, llm, src_path,
+                        notes=notes, verify_instructions=verify_instructions,
+                    )] = attempt
+
+            if live:
+                live.set_verify_workers(active=len(in_flight), capacity=_VERIFY_WORKERS)
+
+            if not in_flight:
+                if analysis_done.is_set():
+                    break
+                time.sleep(0.25)
+            else:
+                wait(list(in_flight), timeout=0.25, return_when=FIRST_COMPLETED)
+
+    if live:
+        live.set_verify_workers(active=0, capacity=0, phase="idle")
 
 
-def run_harness(args: Namespace) -> None:
+def run_harness(args: Namespace, live: LiveState | None = None) -> None:
     src_path = Path(args.src).expanduser()
     print(f"Source to examine: {src_path}")
 
@@ -636,8 +683,26 @@ def run_harness(args: Namespace) -> None:
         return
 
     _rank_phase(state, src_path, args, unranked)
-    _analysis_phase(state, src_path, args, notes=project_notes)
-    _verify_phase(state, src_path, args, notes=project_notes, verify_instructions=verify_instructions)
+
+    analysis_done = threading.Event()
+
+    def _run_analysis() -> None:
+        try:
+            _analysis_phase(state, src_path, args, notes=project_notes, live=live)
+        finally:
+            analysis_done.set()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        af = executor.submit(_run_analysis)
+        vf = executor.submit(
+            _verify_phase, state, src_path, args,
+            notes=project_notes,
+            verify_instructions=verify_instructions,
+            analysis_done=analysis_done,
+            live=live,
+        )
+        af.result()
+        vf.result()
 
 
 def rank_files(agent, files: list[str], src_path: Path) -> Generator[tuple[str, float], None, None]:
