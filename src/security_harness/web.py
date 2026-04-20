@@ -1,8 +1,10 @@
 from pathlib import Path
 
+import markdown as md
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup
 
 from security_harness.live_state import LiveState
 from security_harness.state import State
@@ -10,9 +12,14 @@ from security_harness.state import State
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 
+def _md(text: str) -> Markup:
+    return Markup(md.markdown(text or "", extensions=["fenced_code", "tables"]))
+
+
 def create_app(state: State, live: LiveState) -> FastAPI:
     app = FastAPI(title="Security Harness")
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+    templates.env.filters["markdown"] = _md
 
     def _worker_ctx() -> dict:
         snap = live.snapshot()

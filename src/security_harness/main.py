@@ -50,6 +50,10 @@ def main():
 
     try:
         run_harness(args, live=live)
+        if server is not None:
+            print("No work to do. Dashboard running — press Ctrl+C to exit.")
+            while True:
+                web_thread.join(timeout=1)
     except KeyboardInterrupt:
         pass
     finally:

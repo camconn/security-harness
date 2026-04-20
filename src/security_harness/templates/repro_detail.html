@@ -42,7 +42,7 @@
   <div class="col-lg-6">
     <div class="card h-100">
       <div class="card-header fw-semibold">Description</div>
-      <div class="card-body" style="color: #e6edf3; white-space: pre-wrap;">{{ bug.description or '—' }}</div>
+      <div class="card-body">{{ bug.description | markdown if bug.description else '—' }}</div>
     </div>
   </div>
 
@@ -50,7 +50,7 @@
   <div class="col-lg-6">
     <div class="card h-100">
       <div class="card-header fw-semibold">Verification Notes</div>
-      <div class="card-body" style="color: #e6edf3; white-space: pre-wrap;">{{ bug.attempt_notes or '—' }}</div>
+      <div class="card-body">{{ bug.attempt_notes | markdown if bug.attempt_notes else '—' }}</div>
     </div>
   </div>
 

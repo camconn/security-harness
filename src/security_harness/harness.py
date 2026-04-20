@@ -212,12 +212,13 @@ Classify the verification as one of two types:
 - "audit": The vulnerability can be confirmed by reading the code alone. Use this only
   whenever it is extremely difficult to create a proof-of-concept (i.e. cryptography flaws).
   Since false positives are costly, only use this type for cryptographic or difficult-to-
-  confirm vulnerabilities.
+  confirm vulnerabilities. You may only use the "audit" type for *actual application code*.
 - "poc": The vulnerability requires a working proof-of-concept to confirm it is exploitable
   (e.g., SQL injection, authentication bypass, XSS, SSRF, RCE). Use this when the bug
   depends on runtime data-flow or requires demonstration against a running service.
 
 For "audit" findings, read the relevant source file(s) and confirm or refute the claim.
+You *can not* use test files (unit tests, hurl scripts) to confirm an issue exists.
 For "poc" findings, evaluate whether the provided proof-of-concept is technically sound
 and correctly targets the described vulnerability path in the code. Write a corrected or
 improved working PoC if the original is incomplete or incorrect.
