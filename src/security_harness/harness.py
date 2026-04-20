@@ -399,8 +399,8 @@ def _parse_bug_reports(content: str, primary_file: str) -> list[BugReport]:
 
 
 def _parse_verify_result(content: str) -> tuple[str, str, str, str | None] | None:
-    type_match = re.search(r"Type:\s*(audit|poc)", content, re.IGNORECASE)
-    status_match = re.search(r"Status:\s*(success|failure)", content, re.IGNORECASE)
+    type_match = re.search(r'Type:\s*"?(audit|poc)', content, re.IGNORECASE)
+    status_match = re.search(r'Status:\s*"?(success|failure)', content, re.IGNORECASE)
     notes_match = re.search(r"Notes:\s*\n(.*?)(?:WorkingPoC:|$)", content, re.DOTALL)
     poc_match = re.search(r"WorkingPoC:\s*\n?(.*?)$", content, re.DOTALL)
     if not type_match or not status_match:

@@ -176,6 +176,24 @@ N/A
     assert working_poc is None
 
 
+def test_verify_quoted_type_and_status():
+    """LLM may follow the format spec literally and quote Type/Status values."""
+    content = """\
+Verify: Some Bug
+Type: "poc"
+Status: "success"
+Notes:
+Confirmed exploitable.
+WorkingPoC:
+curl http://example.com/exploit
+"""
+    result = _parse_verify_result(content)
+    assert result is not None
+    vtype, status, notes, working_poc = result
+    assert vtype == "poc"
+    assert status == "success"
+
+
 def test_verify_missing_type_returns_none():
     content = """\
 Status: success
