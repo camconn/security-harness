@@ -5,7 +5,7 @@ from pathlib import Path
 from langchain_core.tools import tool
 
 
-COMMAND_WHITELIST = {
+COMMAND_WHITELIST: set[str] = {
     "curl", "wget",
     "python", "python3",
     "gcc", "clang", "cc", "c++", "clang++", "g++",
