@@ -323,45 +323,55 @@ Verify: """
 
 
 DEDUP_TASK = """\
-You are comparing two security vulnerability reports to determine if they describe the
-same underlying vulnerability (same root cause, same attack surface, same fix).
+You are comparing a new security vulnerability report against {n} existing report(s) to
+determine if any describe the same underlying vulnerability (same root cause, same attack
+surface, same fix).
 
 Minor wording differences, severity differences, or different file names do not matter —
 focus on whether an engineer would file them as one ticket or two.
 
-Bug A:
-Title: {title_a}
-File: {file_a}
-Description: {desc_a}
+New Bug:
+Title: {title}
+File: {file}
+Description: {desc}
 
-Bug B:
-Title: {title_b}
-File: {file_b}
-Description: {desc_b}
+Existing Bugs:
+{candidates}
+
+If the new bug duplicates one of the existing bugs, respond with its number. Otherwise respond "none".
 
 Respond with exactly:
-Duplicate: yes|no
+Duplicate: <number>|none
 Reasoning: <one sentence>
 """
 
 
-def _parse_dedup_result(content: str) -> bool:
-    m = re.search(r"Duplicate:\s*(yes|no)", content, re.IGNORECASE)
-    return bool(m and m.group(1).lower() == "yes")
+def _parse_dedup_result(content: str) -> int | None:
+    m = re.search(r"Duplicate:\s*(\d+|none)", content, re.IGNORECASE)
+    if not m or m.group(1).lower() == "none":
+        return None
+    return int(m.group(1))
 
 
-def check_duplicate(bug: BugReport, candidates: list[tuple[int, BugReport]], llm) -> int | None:
-    for candidate_id, candidate in candidates:
+def check_duplicate(bug: BugReport, candidates: list[tuple[int, BugReport]], llm, batch_size: int = 10) -> int | None:
+    for i in range(0, len(candidates), batch_size):
+        batch = candidates[i:i + batch_size]
+        candidates_text = "\n\n".join(
+            f"[{j + 1}] Title: {c.title}\n    File: {c.primary_file}\n    Description: {c.description}"
+            for j, (_, c) in enumerate(batch)
+        )
         prompt = DEDUP_TASK.format(
-            title_a=bug.title, file_a=bug.primary_file, desc_a=bug.description,
-            title_b=candidate.title, file_b=candidate.primary_file, desc_b=candidate.description,
+            n=len(batch),
+            title=bug.title, file=bug.primary_file, desc=bug.description,
+            candidates=candidates_text,
         )
         response = llm.invoke([HumanMessage(content=prompt)])
         content = response.content
         if isinstance(content, list):
             content = " ".join(p["text"] for p in content if p.get("type") == "text")
-        if _parse_dedup_result(content):
-            return candidate_id
+        idx = _parse_dedup_result(content)
+        if idx is not None and 1 <= idx <= len(batch):
+            return batch[idx - 1][0]
     return None
 
 
@@ -540,7 +550,7 @@ def _analysis_phase(state: State, src_path: Path, args: Namespace, *, notes: str
                 print(f"  {target.path}")
             canonical = state.get_canonical_bug_reports() if args.dedup else []
             for report in reports:
-                dup_id = check_duplicate(report, canonical, llm) if args.dedup else None
+                dup_id = check_duplicate(report, canonical, llm, batch_size=args.dedup_batch_size) if args.dedup else None
                 if dup_id is not None:
                     print(f"    [dup] {report.title} -> [{dup_id}]")
                     continue

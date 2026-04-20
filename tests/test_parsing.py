@@ -204,22 +204,23 @@ def test_verify_empty_content_returns_none():
 
 # --- _parse_dedup_result ---
 
-def test_dedup_yes():
-    assert _parse_dedup_result("Duplicate: yes\nReasoning: Same root cause.") is True
+def test_dedup_number_match():
+    assert _parse_dedup_result("Duplicate: 3\nReasoning: Same root cause.") == 3
 
 
-def test_dedup_no():
-    assert _parse_dedup_result("Duplicate: no\nReasoning: Different attack surfaces.") is False
+def test_dedup_none():
+    assert _parse_dedup_result("Duplicate: none\nReasoning: Different attack surfaces.") is None
 
 
 def test_dedup_case_insensitive():
-    assert _parse_dedup_result("Duplicate: YES") is True
-    assert _parse_dedup_result("Duplicate: No") is False
+    assert _parse_dedup_result("Duplicate: 1") == 1
+    assert _parse_dedup_result("Duplicate: None") is None
+    assert _parse_dedup_result("Duplicate: NONE") is None
 
 
-def test_dedup_empty_defaults_false():
-    assert _parse_dedup_result("") is False
+def test_dedup_empty_returns_none():
+    assert _parse_dedup_result("") is None
 
 
-def test_dedup_no_marker_defaults_false():
-    assert _parse_dedup_result("These bugs look similar but are distinct issues.") is False
+def test_dedup_no_marker_returns_none():
+    assert _parse_dedup_result("These bugs look similar but are distinct issues.") is None

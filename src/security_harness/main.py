@@ -19,6 +19,7 @@ def main():
     parser.add_argument("--provider", type=str, default="openai", choices=["openai", "anthropic"], help="LLM provider")
     parser.add_argument("--model", type=str, default="gpt-5.4", help="Model name for the chosen provider")
     parser.add_argument("--dedup", action="store_true", default=False, help="Enable LLM-based duplicate detection when storing new bug reports")
+    parser.add_argument("--dedup_batch_size", type=int, default=10, metavar="N", help="Number of existing bug reports compared per LLM call during dedup (default: 10)")
 
     args = parser.parse_args()
     run_harness(args)
