@@ -24,3 +24,8 @@ Running with `uv run --env-file .env` will load these automatically.
 For information, run `main.py` with `--help`
 
 `uv run security-harness`
+
+# TODO
+* Give agents an email.
+    * Lots of vulnerabilities are related to email
+    * Give agents a way to receive emails at an ephemeral address
