@@ -538,9 +538,9 @@ def _analysis_phase(state: State, src_path: Path, args: Namespace, *, notes: str
             state.increment_run_count(target.path)
             if reports:
                 print(f"  {target.path}")
-            canonical = state.get_canonical_bug_reports()
+            canonical = state.get_canonical_bug_reports() if args.dedup else []
             for report in reports:
-                dup_id = check_duplicate(report, canonical, llm)
+                dup_id = check_duplicate(report, canonical, llm) if args.dedup else None
                 if dup_id is not None:
                     print(f"    [dup] {report.title} -> [{dup_id}]")
                     continue

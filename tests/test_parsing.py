@@ -90,7 +90,7 @@ Put "quotes" around the status in the reproduction report, and it dies!
 """
     reports = _parse_bug_reports(content, "scripts/fetch-creds.sh")
     assert len(reports) == 1
-    assert reports[0].title == "Production database credentials are exposed in plaintext through stdout-based secret handling"
+    assert reports[0].title == 'Quotes in the "Status" field break the parser'
     assert reports[0].severity == 5.9
 
 

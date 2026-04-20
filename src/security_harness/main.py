@@ -18,6 +18,7 @@ def main():
     parser.add_argument("--verify_count", type=int, default=0, help="Number of pending bug reports to verify after analysis (0 = skip)")
     parser.add_argument("--provider", type=str, default="openai", choices=["openai", "anthropic"], help="LLM provider")
     parser.add_argument("--model", type=str, default="gpt-5.4", help="Model name for the chosen provider")
+    parser.add_argument("--dedup", action="store_true", default=False, help="Enable LLM-based duplicate detection when storing new bug reports")
 
     args = parser.parse_args()
     run_harness(args)
