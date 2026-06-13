@@ -525,59 +525,71 @@ def _rank_phase(state: State, src_path: Path, args: Namespace, unranked: list[st
 _ANALYSIS_WORKERS = 8
 
 def _analysis_phase(state: State, src_path: Path, args: Namespace, *, notes: str | None = None, live: LiveState | None = None) -> None:
-    if args.analysis_count <= 0:
+    if args.analysis_count == 0:
         return
 
-    # Collect distinct targets in memory without touching the DB.
-    reserved: set[str] = set()
-    targets: list[FileRanking] = []
-    for _ in range(args.analysis_count):
-        target = state.next_analysis_target(exclude=reserved)
-        if target is None:
-            break
-        reserved.add(target.path)
-        targets.append(target)
-
-    if not targets:
-        return
+    # A negative count means run indefinitely; otherwise cap the total analyses.
+    infinite = args.analysis_count < 0
+    remaining = args.analysis_count
 
     llm = make_llm(args.provider, args.model)
     agent = make_analysis_agent(llm, make_file_tools(src_path))
-    print(f"Analyzing {len(targets)} file(s) with {_ANALYSIS_WORKERS} workers...")
-
-    if live:
-        live.set_analysis_workers(active=0, capacity=len(targets))
+    if infinite:
+        print(f"Analyzing indefinitely with {_ANALYSIS_WORKERS} workers...")
+    else:
+        print(f"Analyzing up to {remaining} file(s) with {_ANALYSIS_WORKERS} workers...")
 
     with ThreadPoolExecutor(max_workers=_ANALYSIS_WORKERS) as executor:
-        in_flight: dict = {}
-        for target in targets:
-            if live:
-                live.add_active_file(target.path)
-            fut = executor.submit(analysis, target, agent, src_path, notes=notes)
-            in_flight[fut] = target
+        while infinite or remaining > 0:
+            # Collect a batch of distinct targets without touching the DB twice.
+            batch_size = _ANALYSIS_WORKERS if infinite else min(_ANALYSIS_WORKERS, remaining)
+            reserved: set[str] = set()
+            targets: list[FileRanking] = []
+            for _ in range(batch_size):
+                target = state.next_analysis_target(exclude=reserved)
+                if target is None:
+                    break
+                reserved.add(target.path)
+                targets.append(target)
 
-        if live:
-            live.set_analysis_workers(active=len(in_flight), capacity=len(targets))
+            if not targets:
+                break
 
-        for future, target in in_flight.items():
-            reports = future.result()
             if live:
-                live.remove_active_file(target.path)
-                live.set_analysis_workers(
-                    active=sum(1 for f in in_flight if not f.done()),
-                    capacity=len(targets),
-                )
-            state.increment_run_count(target.path)
-            if reports:
-                print(f"  {target.path}")
-            canonical = state.get_canonical_bug_reports() if args.dedup else []
-            for report in reports:
-                dup_id = check_duplicate(report, canonical, llm, batch_size=args.dedup_batch_size) if args.dedup else None
-                if dup_id is not None:
-                    print(f"    [dup] {report.title} -> [{dup_id}]")
-                    continue
-                bug_id = state.insert_bug_report(report)
-                print(f"    [{bug_id}] {report.severity:.1f}  {report.title}")
+                live.set_analysis_workers(active=0, capacity=len(targets))
+
+            in_flight: dict = {}
+            for target in targets:
+                if live:
+                    live.add_active_file(target.path)
+                fut = executor.submit(analysis, target, agent, src_path, notes=notes)
+                in_flight[fut] = target
+
+            if live:
+                live.set_analysis_workers(active=len(in_flight), capacity=len(targets))
+
+            for future, target in in_flight.items():
+                reports = future.result()
+                if live:
+                    live.remove_active_file(target.path)
+                    live.set_analysis_workers(
+                        active=sum(1 for f in in_flight if not f.done()),
+                        capacity=len(targets),
+                    )
+                state.increment_run_count(target.path)
+                if reports:
+                    print(f"  {target.path}")
+                canonical = state.get_canonical_bug_reports() if args.dedup else []
+                for report in reports:
+                    dup_id = check_duplicate(report, canonical, llm, batch_size=args.dedup_batch_size) if args.dedup else None
+                    if dup_id is not None:
+                        print(f"    [dup] {report.title} -> [{dup_id}]")
+                        continue
+                    bug_id = state.insert_bug_report(report)
+                    print(f"    [{bug_id}] {report.severity:.1f}  {report.title}")
+
+            if not infinite:
+                remaining -= len(targets)
 
     if live:
         live.set_analysis_workers(active=0, capacity=0, phase="idle")
