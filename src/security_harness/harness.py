@@ -525,12 +525,17 @@ def _rank_phase(state: State, src_path: Path, args: Namespace, unranked: list[st
 _ANALYSIS_WORKERS = 8
 
 def _analysis_phase(state: State, src_path: Path, args: Namespace, *, notes: str | None = None, live: LiveState | None = None) -> None:
-    if args.analysis_count == 0:
+    # Unset (None) defaults to twice the number of ranked files in the project.
+    analysis_count = args.analysis_count
+    if analysis_count is None:
+        analysis_count = 2 * len(state.get_file_rankings())
+
+    if analysis_count == 0:
         return
 
     # A negative count means run indefinitely; otherwise cap the total analyses.
-    infinite = args.analysis_count < 0
-    remaining = args.analysis_count
+    infinite = analysis_count < 0
+    remaining = analysis_count
 
     llm = make_llm(args.provider, args.model)
     agent = make_analysis_agent(llm, make_file_tools(src_path))
@@ -556,7 +561,7 @@ def _analysis_phase(state: State, src_path: Path, args: Namespace, *, notes: str
                 break
 
             if live:
-                live.set_analysis_workers(active=0, capacity=len(targets))
+                live.set_analysis_workers(active=0, capacity=_ANALYSIS_WORKERS)
 
             in_flight: dict = {}
             for target in targets:
@@ -566,7 +571,7 @@ def _analysis_phase(state: State, src_path: Path, args: Namespace, *, notes: str
                 in_flight[fut] = target
 
             if live:
-                live.set_analysis_workers(active=len(in_flight), capacity=len(targets))
+                live.set_analysis_workers(active=len(in_flight), capacity=_ANALYSIS_WORKERS)
 
             for future, target in in_flight.items():
                 reports = future.result()
@@ -574,7 +579,7 @@ def _analysis_phase(state: State, src_path: Path, args: Namespace, *, notes: str
                     live.remove_active_file(target.path)
                     live.set_analysis_workers(
                         active=sum(1 for f in in_flight if not f.done()),
-                        capacity=len(targets),
+                        capacity=_ANALYSIS_WORKERS,
                     )
                 state.increment_run_count(target.path)
                 if reports:
